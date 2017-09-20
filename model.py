@@ -8,7 +8,6 @@ from tqdm import tqdm
 
 import pytoolkit as tk
 
-_LARGE_IMAGE_SIZE = False
 _TRAIN_DIFFICULT = True
 
 
@@ -35,7 +34,7 @@ class ObjectDetector(object):
         sizes = np.sqrt((bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1]))
         fm_sizes = 1 / np.array(ObjectDetector.FM_COUNTS)
         pb_size_ratios = np.concatenate([sizes / fm_size for fm_size in fm_sizes])
-        pb_size_ratios = pb_size_ratios[np.logical_and(pb_size_ratios >= 1, pb_size_ratios < 5)]
+        pb_size_ratios = pb_size_ratios[np.logical_and(pb_size_ratios >= 1, pb_size_ratios < ObjectDetector.FM_COUNTS[-1] + 0.5)]
         cluster = sklearn.cluster.KMeans(n_clusters=pb_size_patterns, n_jobs=-1)
         cluster.fit(np.expand_dims(pb_size_ratios, axis=-1))
         pb_size_ratios = np.sort(cluster.cluster_centers_[:, 0])
@@ -48,8 +47,10 @@ class ObjectDetector(object):
         return cls(nb_classes, mean_objets, pb_size_ratios, aspect_ratios)
 
     def __init__(self, nb_classes, mean_objets, pb_size_ratios=(1.5, 2.5), aspect_ratios=(1, 2, 1 / 2, 3, 1 / 3)):
+        from net import INPUT_SIZE
+
         self.nb_classes = nb_classes
-        self.input_size = (645, 645) if _LARGE_IMAGE_SIZE else (320, 320)
+        self.input_size = INPUT_SIZE
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
         # 1 / fm_countに対する、prior boxの基準サイズの割合。3なら3倍の大きさのものを用意。
@@ -63,10 +64,8 @@ class ObjectDetector(object):
         self.pb_indices = None
         # shape=(box数,4)でpred_locsのスケール
         self.pb_scales = None
-        # shape=(config数,)でpb_size
-        self.pb_sizes = None
         # 各prior boxの情報をdictで保持
-        self.config = None
+        self.pb_info = None
 
         self._create_prior_boxes()
 
@@ -74,67 +73,62 @@ class ObjectDetector(object):
         assert self.pb_locs.shape == (nb_pboxes, 4)
         assert self.pb_indices.shape == (nb_pboxes,)
         assert self.pb_scales.shape == (nb_pboxes, 4)
-        assert self.pb_sizes.shape == (len(ObjectDetector.FM_COUNTS) * len(self.pb_size_ratios),)
-        assert len(self.config) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_ratios)
+        assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_ratios) * len(self.aspect_ratios)
 
     def _create_prior_boxes(self):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
         self.pb_locs = []
         self.pb_indices = []
         self.pb_scales = []
-        self.pb_sizes = []
-        self.config = []
+        self.pb_info = []
         for fm_count in ObjectDetector.FM_COUNTS:
             # 敷き詰める間隔
             tile_size = 1.0 / fm_count
-            # 敷き詰めたときの中央の位置のリスト
-            lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, fm_count, dtype=np.float32)
-            # 縦横に敷き詰め
-            centers_x, centers_y = np.meshgrid(lin, lin)
-            centers_x = centers_x.reshape(-1, 1)
-            centers_y = centers_y.reshape(-1, 1)
-            prior_boxes = np.concatenate((centers_x, centers_y), axis=1)
-            # (x, y) → サイズ比アスペクト比×タイル×(x1, y1, x2, y2)
-            prior_boxes = np.tile(prior_boxes, (len(self.pb_size_ratios) * len(self.aspect_ratios), 1, 2))
-            assert prior_boxes.shape == (len(self.pb_size_ratios) * len(self.aspect_ratios), fm_count ** 2, 4)
+            for pb_size_ratio in self.pb_size_ratios:
+                # prior boxのサイズの基準
+                pb_size = tile_size * pb_size_ratio
+                for aspect_ratio in self.aspect_ratios:
+                    # 敷き詰めたときの中央の位置のリスト
+                    lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, fm_count, dtype=np.float32)
+                    # 縦横に敷き詰め
+                    centers_x, centers_y = np.meshgrid(lin, lin)
+                    centers_x = centers_x.reshape(-1, 1)
+                    centers_y = centers_y.reshape(-1, 1)
+                    prior_boxes = np.concatenate((centers_x, centers_y), axis=1)
+                    # (x, y) → タイル×(x1, y1, x2, y2)
+                    prior_boxes = np.tile(prior_boxes, (1, 2))
+                    assert prior_boxes.shape == (fm_count ** 2, 4)
 
-            # #  → タイル×サイズ比アスペクト比×(x1, y1, x2, y2)
-            # prior_boxes = np.swapaxes(prior_boxes, 0, 1)
-            # assert prior_boxes.shape == (fm_count ** 2, len(self.pb_size_ratios) * len(self.aspect_ratios), 4)
-            # half_box_widths = np.reshape([0.5 * tile_size * psr * np.sqrt(self.aspect_ratios) for psr in self.pb_size_ratios], (1, -1))
-            # half_box_heights = np.reshape([0.5 * tile_size * psr / np.sqrt(self.aspect_ratios) for psr in self.pb_size_ratios], (1, -1))
+                    # prior boxのサイズ
+                    # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
+                    pb_w = pb_size * np.sqrt(aspect_ratio)
+                    pb_h = pb_size / np.sqrt(aspect_ratio)
+                    prior_boxes[:, 0] -= pb_w / 2
+                    prior_boxes[:, 1] -= pb_h / 2
+                    prior_boxes[:, 2] += pb_w / 2
+                    prior_boxes[:, 3] += pb_h / 2
+                    # はみ出ているのはclipしておく
+                    prior_boxes = np.clip(prior_boxes, 0, 1)
 
-            # prior boxのサイズ
-            # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
-            half_box_widths = np.reshape([0.5 * tile_size * psr * np.sqrt(self.aspect_ratios) for psr in self.pb_size_ratios], (-1, 1))
-            half_box_heights = np.reshape([0.5 * tile_size * psr / np.sqrt(self.aspect_ratios) for psr in self.pb_size_ratios], (-1, 1))
-            prior_boxes[:, :, 0] -= half_box_widths
-            prior_boxes[:, :, 1] -= half_box_heights
-            prior_boxes[:, :, 2] += half_box_widths
-            prior_boxes[:, :, 3] += half_box_heights
-            # はみ出ているのはclipしておく
-            prior_boxes = np.clip(prior_boxes, 0, 1)
-
-            # (タイル, サイズ比アスペクト比, 4) → (タイルサイズ比アスペクト比, 4)
-            prior_boxes = prior_boxes.reshape(-1, 4)
-
-            self.pb_locs.extend(prior_boxes)
-            self.pb_indices.extend([len(self.config)] * len(prior_boxes))
-            self.pb_scales.extend(np.tile(prior_boxes[:, 2:] - prior_boxes[:, :2], 2))
-            for pb_size in tile_size * self.pb_size_ratios:
-                self.pb_sizes.append(pb_size)
-                self.config.append({'fm_count': fm_count, 'pb_size': pb_size, 'box_count': len(prior_boxes)})
+                    self.pb_locs.extend(prior_boxes)
+                    self.pb_scales.extend([[pb_w, pb_h] * 2] * len(prior_boxes))
+                    self.pb_indices.extend([len(self.pb_info)] * len(prior_boxes))
+                    self.pb_info.append({
+                        'fm_count': fm_count,
+                        'size': pb_size,
+                        'aspect_ratio': aspect_ratio,
+                        'count': len(prior_boxes),
+                    })
 
         self.pb_locs = np.array(self.pb_locs)
         self.pb_indices = np.array(self.pb_indices)
-        self.pb_sizes = np.array(self.pb_sizes)
         self.pb_scales = np.array(self.pb_scales)
 
     def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
-        match_counts = [0 for _ in range(len(self.config))]
+        match_counts = [0] * len(self.pb_info)
         rec_mean_abs_delta = []
         unrec_widths = []
         unrec_heights = []
@@ -169,9 +163,11 @@ class ObjectDetector(object):
         logger.debug(cr)
         logger.debug('match counts:')
         for i, c in enumerate(match_counts):
-            logger.debug('  prior_boxes_%d = %d (%.02f%%)',
-                         self.config[i]['fm_count'], c,
-                         100 * c / self.config[i]['box_count'] / total_gt_boxes)
+            logger.debug('  prior boxes{fm=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
+                         self.pb_info[i]['fm_count'],
+                         self.pb_info[i]['size'],
+                         self.pb_info[i]['aspect_ratio'],
+                         c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
         # 再現しなかったboxのwidth/height/aspect ratioのヒストグラムを出力
         import matplotlib.pyplot as plt
         plt.hist(rec_mean_abs_delta, bins=32)
@@ -205,29 +201,29 @@ class ObjectDetector(object):
 
     @staticmethod
     def _loss_conf(gt_confs, pred_confs, obj_div):
-        """分類のloss。
-
-        # alpha
-
-        Focal lossの論文では0.25が良いとしているが、他のパラメータとのバランスに依ると思う。
-
-        SSDではbg : obj = 3 : 1になるようにminingして学習している。
-        bg : obj = (priorbox - assigned) * (1 - alpha) : assigned * alpha
-        なので、
-        alpha = (priorbox - assigned) / (priorbox + assigned * (3 - 1))
-        となる。
-        priorbox = 46035
-        assigned = 60
-        とすると、
-        alpha = (46035 - 60) / (46035 + 60 * (3 - 1)) = 0.996
-
-        ただし、miningはlossの大きいもの優先なので必ずしもこの通りではない。
-        仮に3→9とすると0.988。
-
-        """
+        """分類のloss。"""
         import keras.backend as K
-        loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs, alpha=0.99)
-        loss = K.sum(loss, axis=-1) / obj_div  # normalized by the number of anchors assigned to a ground-truth box
+        if True:
+            # Focal lossの論文では0.25が良いとしているが、他のパラメータとのバランスに依ると思う。
+            #
+            # SSDではbg : obj = 3 : 1になるようにminingして学習している。
+            # bg : obj = (priorbox - assigned) * (1 - alpha) : assigned * alpha
+            # なので、
+            # alpha = (priorbox - assigned) / (priorbox + assigned * (3 - 1))
+            # となる。
+            # priorbox = 46035
+            # assigned = 60
+            # とすると、
+            # alpha = (46035 - 60) / (46035 + 60 * (3 - 1)) = 0.996
+            #
+            # ただし、miningはlossの大きいもの優先なので必ずしもこの通りではない。
+            # 仮に3→9とすると0.988。100で0.9、200で0.8。
+            loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs, alpha=0.99)
+            loss = K.sum(loss, axis=-1) / obj_div  # normalized by the number of anchors assigned to a ground-truth box
+        else:
+            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.99)
+            loss = K.maximum(loss - 0.01, 0)  # clip
+            loss = K.mean(loss, axis=-1)
         return loss
 
     @staticmethod
@@ -298,7 +294,7 @@ class ObjectDetector(object):
             pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # 割り当てようとしているgt_ix
 
             # 大きいものから順に割り当てる (小さいものが出来るだけうまく割当たって欲しいので)
-            gt_ix_list = np.argsort(-np.prod(y.bboxes[:, 2:] - y.bboxes[:, :2], axis=-1))
+            gt_ix_list = np.argsort(-np.prod(y.bboxes[:, 2:] - y.bboxes[:, : 2], axis=-1))
             for gt_ix in gt_ix_list:
                 if not _TRAIN_DIFFICULT and y.difficult[gt_ix]:
                     continue
@@ -315,9 +311,7 @@ class ObjectDetector(object):
                     pb_ixs = iou[:, gt_ix].argmax()
                     if pb_candidates[pb_ixs] >= 0:  # 割り当て済みな場合
                         if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
-                            warnings.warn(
-                                'IOU < 0.5での割り当ての重複: {} ({}, {})'.format(
-                                    y.filename, pb_candidates[pb_ixs], gt_ix))
+                            warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
                     pb_confs[pb_ixs] = 1
                     pb_candidates[pb_ixs] = gt_ix
 
@@ -339,7 +333,7 @@ class ObjectDetector(object):
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
 
-    def decode_predictions(self, predictions, top_k=16, detect_least_conf=0.9, detect_min_conf=0.6, collision_iou=0.75):
+    def decode_predictions(self, predictions, top_k=16, conf_threshold=0.75, collision_iou=0.75):
         """予測結果をデコードする。
 
         出力は以下の3つの値。画像ごとにconfidenceの降順。
@@ -352,12 +346,12 @@ class ObjectDetector(object):
         assert predictions.shape[2] == self.nb_classes + 4
         confs_list, locs_list = predictions[:, :, :-4], predictions[:, :, -4:]
         classes, confs, locs = zip(*[
-            self._decode_prediction(confs, locs, top_k, detect_least_conf, detect_min_conf, collision_iou)
+            self._decode_prediction(confs, locs, top_k, conf_threshold, collision_iou)
             for confs, locs
             in zip(confs_list, locs_list)])
         return classes, confs, locs
 
-    def _decode_prediction(self, pred_confs, pred_locs, top_k, detect_least_conf, detect_min_conf, collision_iou):
+    def _decode_prediction(self, pred_confs, pred_locs, top_k, conf_threshold, collision_iou):
         """予測結果のデコード。(1枚分)"""
         assert len(pred_confs) == len(pred_locs)
         assert pred_confs.shape == (len(self.pb_locs), self.nb_classes)
@@ -368,21 +362,17 @@ class ObjectDetector(object):
         detections = 0
         # confidenceの上位を降順にループ
         obj_confs = pred_confs[:, 1:].max(axis=-1)  # prior box数分の、背景以外のconfidenceの最大値
-        for pb_ix in np.argsort(obj_confs)[::-1]:
+        for pb_ix in np.argsort(obj_confs)[:: -1]:
             loc = self.pb_locs[pb_ix, :] + pred_locs[pb_ix, :] * self.pb_scales[pb_ix, :]
             loc = np.clip(loc, 0, 1)  # はみ出ている分はクリッピング
             assert loc.shape == (4,)
             # 幅や高さが0以下になってしまっているものはスキップする
-            if (loc[2:] <= loc[:2]).any():
+            if (loc[2:] <= loc[: 2]).any():
                 continue
-            # 充分高いconfidenceのものがあるなら、ある程度以下のconfidenceのものは無視
-            if len(confs) >= 1 and detect_least_conf <= confs[0] and obj_confs[pb_ix] < detect_min_conf:
+            # top_k個を超えていてconfidenceが閾値未満ならおしまい
+            if obj_confs[pb_ix] < conf_threshold and top_k <= detections:
                 break
-
             detections += 1
-            # 最大top_k個まで検知扱いにする
-            if top_k < detections:
-                break
 
             # 既に出現済みのものと大きく重なっているものはスキップする
             class_id = pred_confs[pb_ix, 1:].argmax(axis=-1) + 1

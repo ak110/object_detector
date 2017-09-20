@@ -109,8 +109,10 @@ ENV/
 data/VOCdevkit/
 results_debug/
 
-# 容量が大きいものは必要ならまた作ることにする。(保存は一応しておく)
-*.h5
-model.png
-model.params.png
-batchlog.tsv
+# 当面は実行結果もignore
+results/
+# # 容量が大きいものは必要ならまた作ることにする。(保存は一応しておく)
+# *.h5
+# model.png
+# model.params.png
+# batchlog.tsv

@@ -1,5 +1,6 @@
 """ObjectDetectionのモデル。"""
 import pathlib
+import sys
 
 import numpy as np
 from tqdm import tqdm
@@ -40,9 +41,11 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     map1 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list, pred_classes_list, pred_locs_list, use_voc2007_metric=False)
     map2 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list, pred_classes_list, pred_locs_list, use_voc2007_metric=True)
 
+    sys.stdout.flush()
+    sys.stderr.flush()
     logger.debug('mAP={:.4f} mAP(VOC2007)={:.4f}'.format(map1, map2))
     if epoch is not None:
-        print('')
+        print('', file=sys.stderr, flush=True)
 
 
 def plot_truth(X_test, y_test, save_dir):
