@@ -59,8 +59,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    # gridに配置したときのIOUを直接最適化するのは難しそうなので、
-    # とりあえず大雑把にKMeansでクラスタ化したりなど。
     od = ObjectDetector.create(len(CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
@@ -82,7 +80,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         # 学習済み重みの読み込み
         if args.warm:
-            model.load_weights(str(result_dir.joinpath('model.h5')), by_name=True)
+            tk.dl.load_weights(model, result_dir.joinpath('model.best.h5'))
 
         gen = Generator(image_size=od.input_size, od=od)
 

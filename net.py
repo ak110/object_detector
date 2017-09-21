@@ -18,18 +18,18 @@ def create_network(od: ObjectDetector):
         x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
         return x
 
-    def _downblock(x, name):
-        assert K.int_shape(x)[-1] in (128, 256)
+    def _downblock(input_x, name):
+        assert K.int_shape(input_x)[-1] in (128, 256)
+        x = inputs = keras.layers.Input(K.int_shape(input_x)[1:])
         for branch in range(4):
             b = _branch(x, 256 // 4, name=name + '_b' + str(branch))
             x = keras.layers.Concatenate()([x, b])
         x = tk.dl.conv2d(256, (1, 1), padding='same', activation='relu', name=name + '_comp')(x)
-        return x
+        return keras.engine.topology.Container(inputs, x, name)(input_x)
 
     def _us(x, name):
-        assert K.int_shape(x)[-1] == 512
-        x = tk.dl.conv2d(256, (1, 1), padding='same', activation='relu', name=name + '_c1')(x)
-        x = tk.dl.sepconv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
+        assert K.int_shape(x)[-1] == 256
+        x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
         x = keras.layers.UpSampling2D(name=name + '_up')(x)
         return x
 
@@ -37,7 +37,7 @@ def create_network(od: ObjectDetector):
         assert K.int_shape(x)[-1] == 256
         assert K.int_shape(b)[-1] == 256
         x = keras.layers.Concatenate(name=name + '_concat')([x, b])
-        x = tk.dl.sepconv2d(512, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
+        x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
         return x
 
     # ベースネットワーク
@@ -49,12 +49,13 @@ def create_network(od: ObjectDetector):
     ref = {}
     for i, fm_count in enumerate(ObjectDetector.FM_COUNTS):
         x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-        x = _downblock(x, 'down{}_block'.format(fm_count))
+        x = _downblock(x, 'down{}_block1'.format(fm_count))  # for lateral connection
         assert K.int_shape(x)[1] == fm_count
         ref['down{}'.format(fm_count)] = x
+        x = _downblock(x, 'down{}_block2'.format(fm_count))  # for down sampling
 
-    # center
-    x = _downblock(x, 'center_block')
+    # # center
+    # x = _downblock(x, 'center_block')
 
     # upsampling
     for i, fm_count in enumerate(ObjectDetector.FM_COUNTS[::-1]):
@@ -116,7 +117,7 @@ def create_basenet(large_size):
 def create_pm(od: ObjectDetector):
     """Prediction module."""
     import keras
-    inputs = x = keras.layers.Input((None, None, 512))
+    inputs = x = keras.layers.Input((None, None, 256))
     confs, locs = [], []
     for size_ix in range(len(od.pb_size_ratios)):
         for ar_ix in range(len(od.aspect_ratios)):
@@ -128,15 +129,17 @@ def create_pm(od: ObjectDetector):
 
 
 def _create_pm(x, size_ix, ar_ix, od: ObjectDetector):
+    import keras
     from keras.regularizers import l2
     filters = od.nb_classes + 4
     # まずはチャンネル数削減
     x = tk.dl.conv2d(filters * 2, (1, 1), padding='same', activation='relu', use_bn=False,
-                     name='pm-{}-{}-conf_sq'.format(size_ix, ar_ix))(x)
-    # 大きいサイズほど深くしてみる
-    for depth in range(size_ix):
-        x = tk.dl.conv2d(filters * 2, (3, 3), padding='same', activation='relu', use_bn=False,
-                         name='pm-{}-{}-conf_conv{}'.format(size_ix, ar_ix, depth))(x)
+                     name='pm-{}-{}_sq'.format(size_ix, ar_ix))(x)
+    # 軽くDenseNet
+    for depth in range(2):
+        b = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', use_bn=False,
+                         name='pm-{}-{}_conv{}'.format(size_ix, ar_ix, depth))(x)
+        x = keras.layers.Concatenate()([x, b])
     # 最終層(conf)
     conf = tk.dl.conv2d(od.nb_classes, (3, 3), padding='same',
                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),

@@ -51,8 +51,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     #     logger.debug('y_test[%d]: %s', i, str(y))
 
     # 訓練データからパラメータを適当に決める。
-    # gridに配置したときのIOUを直接最適化するのは難しそうなので、
-    # とりあえず大雑把にKMeansでクラスタ化したりなど。
     od = ObjectDetector.create(len(CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
