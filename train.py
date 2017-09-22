@@ -40,14 +40,16 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
+    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     args = parser.parse_args()
 
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
     result_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = pathlib.Path(args.data_dir)
     logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'))
 
     start_time = time.time()
-    _run(args, logger, result_dir, base_dir.joinpath('data'))
+    _run(args, logger, result_dir, data_dir)
     elapsed_time = time.time() - start_time
 
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -77,7 +79,9 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         # 学習済み重みの読み込み
         if args.warm:
-            tk.dl.load_weights(model, result_dir.joinpath('model.best.h5'))
+            model_path = result_dir.joinpath('model.best.h5')
+            tk.dl.load_weights(model, model_path)
+            logger.debug('warm start: %s', model_path.name)
 
         # マルチGPU対応
         gpu_count = tk.get_gpu_count()
@@ -103,7 +107,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         callbacks.append(tk.dl.my_callback_factory()(result_dir, base_lr=_BASE_LR, beta1=0.9990, beta2=0.9995))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
         if gpu_count <= 1:
-        callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
+            callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
         else:
             callbacks.append(keras.callbacks.LambdaCallback(
                 on_epoch_end=lambda epoch, logs: model.save(str(result_dir.joinpath('model.best.h5')))  # bestとは限らないけどとりあえず保存しちゃう

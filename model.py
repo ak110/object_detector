@@ -61,7 +61,7 @@ class ObjectDetector(object):
         # shape=(box数, 4)で座標
         self.pb_locs = None
         # shape=(box数,)で、何種類目のprior boxか (集計用)
-        self.pb_indices = None
+        self.pb_info_indices = None
         # shape=(box数,4)でpred_locsのスケール
         self.pb_scales = None
         # 各prior boxの情報をdictで保持
@@ -71,14 +71,14 @@ class ObjectDetector(object):
 
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4)
-        assert self.pb_indices.shape == (nb_pboxes,)
+        assert self.pb_info_indices.shape == (nb_pboxes,)
         assert self.pb_scales.shape == (nb_pboxes, 4)
         assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_ratios) * len(self.aspect_ratios)
 
     def _create_prior_boxes(self):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
         self.pb_locs = []
-        self.pb_indices = []
+        self.pb_info_indices = []
         self.pb_scales = []
         self.pb_info = []
         for fm_count in ObjectDetector.FM_COUNTS:
@@ -112,7 +112,7 @@ class ObjectDetector(object):
 
                     self.pb_locs.extend(prior_boxes)
                     self.pb_scales.extend([[pb_w, pb_h] * 2] * len(prior_boxes))
-                    self.pb_indices.extend([len(self.pb_info)] * len(prior_boxes))
+                    self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
                     self.pb_info.append({
                         'fm_count': fm_count,
                         'size': pb_size,
@@ -121,15 +121,15 @@ class ObjectDetector(object):
                     })
 
         self.pb_locs = np.array(self.pb_locs)
-        self.pb_indices = np.array(self.pb_indices)
-        self.pb_scales = np.array(self.pb_scales)
+        self.pb_info_indices = np.array(self.pb_info_indices)
+        self.pb_scales = np.array(self.pb_scales) * 0.1  # SSD風適当スケーリング
 
     def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
         match_counts = [0] * len(self.pb_info)
-        rec_mean_abs_delta = []
+        rec_delta_locs = []
         unrec_widths = []
         unrec_heights = []
         unrec_ars = []
@@ -143,10 +143,10 @@ class ObjectDetector(object):
                 y_true.append(class_id)
                 y_pred.append(class_id if success else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
                 if success:
-                    pb_ix = self.pb_indices[iou[:, gt_ix].argmax()]
-                    mean_abs_delta = np.mean(np.abs((y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]))
-                    match_counts[pb_ix] += 1
-                    rec_mean_abs_delta.append(mean_abs_delta)
+                    pb_ix = iou[:, gt_ix].argmax()
+                    delta_locs = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+                    match_counts[self.pb_info_indices[pb_ix]] += 1
+                    rec_delta_locs.append(delta_locs)
             # 再現(iou >= 0.5)しなかったboxの情報を集める
             for bbox in y.bboxes[iou.max(axis=0) < 0.5]:
                 w = bbox[2] - bbox[0]
@@ -168,9 +168,13 @@ class ObjectDetector(object):
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
-        # 再現しなかったboxのwidth/height/aspect ratioのヒストグラムを出力
+        # delta locの分布調査
+        delta_locs = np.concatenate(rec_delta_locs)
+        logger.debug('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
+                     delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
+        # ヒストグラム色々を出力
         import matplotlib.pyplot as plt
-        plt.hist(rec_mean_abs_delta, bins=32)
+        plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
         plt.close()
         plt.hist(unrec_widths, bins=32)
@@ -302,9 +306,13 @@ class ObjectDetector(object):
                 if pb_ixs.any():
                     # IOUが0.5以上のものがあるなら全部割り当てる
                     iou_list = iou[pb_ixs, gt_ix]
-                    obj_confs = iou_list / iou_list.max()  # iouが最大のもの以外はconfが低めになるように割合で割り当てる
-                    assert (obj_confs > 0.5).all()
-                    pb_confs[pb_ixs] = obj_confs
+                    if True:
+                        pb_confs[pb_ixs] = iou_list
+                    else:
+                        obj_confs = iou_list * (0.6 / iou_list.max()) + 0.2  # iouが最大のもの以外はconfが低めになるように割合で割り当てる
+                        assert (obj_confs > 0.5).all() and (obj_confs <= 0.8).all()
+                        pb_confs[pb_ixs] = obj_confs  # 最大でないものは0.5 ～ 0.8
+                        pb_confs[iou[pb_ixs, gt_ix].argmax()] = 1.0  # 最大のものだけ1.0
                     pb_candidates[pb_ixs] = gt_ix
                 else:
                     # 0.5以上のものが無ければIOUが一番大きいものに割り当てる
@@ -320,11 +328,11 @@ class ObjectDetector(object):
                 gt_ix = pb_candidates[pb_ix]
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
-                assert 0 < conf <= 1
-                # confs: 該当のクラスだけ1にする。
+                assert 0.5 <= conf <= 1
+                # confs: 該当のクラスだけ>0.5、残りはbg、他は0にする。
                 confs[i, pb_ix, 0] = 1 - conf  # bg
                 confs[i, pb_ix, class_id] = conf
-                # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetをそのまま回帰する。(prior_boxのサイズでスケーリングもする)
+                # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
                 locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
 
         # 分類の教師が合計≒1になっていることの確認

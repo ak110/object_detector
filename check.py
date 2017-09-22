@@ -27,14 +27,16 @@ def _main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
+    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     args = parser.parse_args()
 
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
     result_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = pathlib.Path(args.data_dir)
     logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'))
 
     start_time = time.time()
-    _run(args, logger, result_dir, base_dir.joinpath('data'))
+    _run(args, logger, result_dir, data_dir)
     elapsed_time = time.time() - start_time
 
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -57,10 +59,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     logger.debug('prior box aspect ratios = %s', str(od.aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.debug('prior box count = %d', len(od.pb_locs))
-    logger.debug('prior boxes:')
-    for c in od.pb_info:
-        logger.debug('  fm_count=%d size=%.2f aspect_ratio=%.2f count=%d',
-                     c['fm_count'], c['size'], c['aspect_ratio'], c['count'])
 
     # prior boxのカバー度合いのチェック
     od.check_prior_boxes(logger, result_dir, y_test, CLASS_NAMES)
