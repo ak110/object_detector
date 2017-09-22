@@ -75,12 +75,23 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
         keras.utils.plot_model(model, str(result_dir.joinpath('model.png')), show_shapes=True)
 
-        # model.compile('nadam', od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
-        model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
-
         # 学習済み重みの読み込み
         if args.warm:
             tk.dl.load_weights(model, result_dir.joinpath('model.best.h5'))
+
+        # マルチGPU対応
+        gpu_count = tk.get_gpu_count()
+        logger.debug('gpu count = %d', gpu_count)
+        if gpu_count <= 1:
+            train_model = model
+            train_batch_size = _BATCH_SIZE
+        else:
+            train_model = tk.dl.create_data_parallel_model(model, gpu_count)
+            train_batch_size = _BATCH_SIZE * gpu_count
+            keras.utils.plot_model(model, str(result_dir.joinpath('model.multigpu.png')), show_shapes=True)
+
+        # train_model.compile('nadam', od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
+        train_model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
 
         gen = Generator(image_size=od.input_size, od=od)
 
@@ -91,7 +102,12 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         # callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
         callbacks.append(tk.dl.my_callback_factory()(result_dir, base_lr=_BASE_LR, beta1=0.9990, beta2=0.9995))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
+        if gpu_count <= 1:
         callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
+        else:
+            callbacks.append(keras.callbacks.LambdaCallback(
+                on_epoch_end=lambda epoch, logs: model.save(str(result_dir.joinpath('model.best.h5')))  # bestとは限らないけどとりあえず保存しちゃう
+            ))
         # callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'acc'))
         # if K.backend() == 'tensorflow':
         #     callbacks.append(keras.callbacks.TensorBoard())
@@ -102,12 +118,12 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
                 on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, epoch, result_dir)
             ))
 
-        model.fit_generator(
-            gen.flow(X_train, y_train, batch_size=_BATCH_SIZE, data_augmentation=not args.debug, shuffle=not args.debug),
-            steps_per_epoch=gen.steps_per_epoch(len(X_train), _BATCH_SIZE),
+        train_model.fit_generator(
+            gen.flow(X_train, y_train, batch_size=train_batch_size, data_augmentation=not args.debug, shuffle=not args.debug),
+            steps_per_epoch=gen.steps_per_epoch(len(X_train), train_batch_size),
             epochs=max_epoch,
-            validation_data=gen.flow(X_test, y_test, batch_size=_BATCH_SIZE),
-            validation_steps=gen.steps_per_epoch(len(X_test), _BATCH_SIZE),
+            validation_data=gen.flow(X_test, y_test, batch_size=train_batch_size),
+            validation_steps=gen.steps_per_epoch(len(X_test), train_batch_size),
             callbacks=callbacks)
 
         model.save(str(result_dir.joinpath('model.h5')))
