@@ -25,8 +25,6 @@ _MAX_EPOCH = 300
 _MAX_EPOCH_DEBUG = 16
 _BASE_LR = 1e-1  # 1e-3
 
-_EVALUATE = True  # 重いので必要なときだけ
-
 
 def _main():
     import matplotlib as mpl
@@ -82,6 +80,10 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             model_path = result_dir.joinpath('model.best.h5')
             tk.dl.load_weights(model, model_path)
             logger.debug('warm start: %s', model_path.name)
+        else:
+            model_path = result_dir.parent.joinpath('results_pretrain', 'model.h5')
+            tk.dl.load_weights(model, model_path)
+            logger.debug('load pretrained weights: %s', model_path.name)
 
         # マルチGPU対応
         gpu_count = tk.get_gpu_count()
@@ -99,11 +101,11 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         gen = Generator(image_size=od.input_size, od=od)
 
         max_epoch = _MAX_EPOCH_DEBUG if args.debug else _MAX_EPOCH
-        # lr_list = [_BASE_LR] * (max_epoch * 6 // 9) + [_BASE_LR / 10] * (max_epoch * 2 // 9) + [_BASE_LR / 100] * (max_epoch * 1 // 9)
+        lr_list = [_BASE_LR] * (max_epoch // 2) + [_BASE_LR / 10] * (max_epoch // 4) + [_BASE_LR / 100] * (max_epoch // 4)
 
         callbacks = []
-        # callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
-        callbacks.append(tk.dl.my_callback_factory()(result_dir, base_lr=_BASE_LR, beta1=0.9990, beta2=0.9995, margin_iterations=518))
+        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
+        # callbacks.append(tk.dl.my_callback_factory()(result_dir, base_lr=_BASE_LR, beta1=0.9990, beta2=0.9995, margin_iterations=518))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
         callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
         # callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'acc'))
@@ -111,14 +113,13 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         #     callbacks.append(keras.callbacks.TensorBoard())
 
         # 各epoch毎にmAPを算出して表示してみる
-        if args.debug or _EVALUATE:
-            callbacks.append(keras.callbacks.LambdaCallback(
-                on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
-            ))
+        callbacks.append(keras.callbacks.LambdaCallback(
+            on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, epoch, result_dir)
+        ))
 
         model.fit_generator(
-            gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=not args.debug),
-            steps_per_epoch=gen.steps_per_epoch(len(X_train), batch_size),
+            gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
+            steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
             epochs=max_epoch,
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
@@ -128,7 +129,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         sklearn.externals.joblib.dump(od, str(result_dir.joinpath('model.pkl')))
 
         # 最終結果表示
-        evaluate(logger, od, model, gen, X_test, y_test, batch_size, None, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, None, result_dir)
 
 
 if __name__ == '__main__':

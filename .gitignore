@@ -111,8 +111,8 @@ results_debug/
 
 # 当面は実行結果もignore
 results/
-# # 容量が大きいものは必要ならまた作ることにする。(保存は一応しておく)
-# *.h5
-# model.png
-# model.params.png
-# batchlog.tsv
+
+# 容量が大きいものは必要ならまた作ることにする。(保存は一応しておく)
+model.png
+model.params.png
+batchlog.tsv

@@ -19,9 +19,8 @@ def load_data(data_dir: pathlib.Path, debug: bool, batch_size):
         tk.io.read_all_lines(data_dir.joinpath('VOCdevkit', 'VOC2007', 'ImageSets', 'Main', 'test.txt'))
     )
     if debug:
-        X_test = X_test[:batch_size]  # 先頭batch_size件だけを使用
-        rep = int(np.ceil((len(X_train) / len(X_test)) ** 0.9))  # 個数を減らした分、水増しする。
-        X_train = np.tile(X_test, rep)
+        X_train = X_test[:batch_size]  # 先頭batch_size件だけを使用
+        X_test = X_train
     annotations = load_annotations(data_dir)
     y_train = np.array([annotations[x] for x in X_train])
     y_test = np.array([annotations[x] for x in X_test])

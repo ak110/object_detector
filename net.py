@@ -7,38 +7,32 @@ _LARGE_IMAGE_SIZE = False
 INPUT_SIZE = (639, 639) if _LARGE_IMAGE_SIZE else (320, 320)
 
 
-def create_network(od: ObjectDetector):
+def create_pretrain_network(input_shape, nb_classes):
     """モデルの作成。"""
     import keras
     import keras.backend as K
 
-    def _branch(x, filters, name):
-        x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c1')(x)
-        x = keras.layers.Dropout(0.25, name=name + '_drop')(x)
-        x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
-        return x
+    # ベースネットワーク
+    x = inputs = keras.layers.Input(input_shape)
+    x = create_basenet(False)(x)
 
-    def _downblock(input_x, name):
-        assert K.int_shape(input_x)[-1] in (128, 256)
-        x = inputs = keras.layers.Input(K.int_shape(input_x)[1:])
-        for branch in range(4):
-            b = _branch(x, 256 // 4, name=name + '_b' + str(branch))
-            x = keras.layers.Concatenate()([x, b])
-        x = tk.dl.conv2d(256, (1, 1), padding='same', activation='relu', name=name + '_comp')(x)
-        return keras.engine.topology.Container(inputs, x, name)(input_x)
+    # downsampling (最初の部分のみ)
+    fm_count = ObjectDetector.FM_COUNTS[0]
+    x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
+    x = _downblock(x, 'down{}_block1'.format(fm_count))  # for lateral connection
+    x = _downblock(x, 'down{}_block2'.format(fm_count))  # for down sampling
 
-    def _us(x, name):
-        assert K.int_shape(x)[-1] == 256
-        x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
-        x = keras.layers.UpSampling2D(name=name + '_up')(x)
-        return x
+    # prediction
+    x = keras.layers.GlobalMaxPooling2D()(x)
+    x = keras.layers.Dense(nb_classes, activation='softmax', kernel_regularizer='l2', name='pretrain_predictions')(x)
 
-    def _upblock(x, b, name):
-        assert K.int_shape(x)[-1] == 256
-        assert K.int_shape(b)[-1] == 256
-        x = keras.layers.Concatenate(name=name + '_concat')([x, b])
-        x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
-        return x
+    return keras.models.Model(inputs=inputs, outputs=x)
+
+
+def create_network(od: ObjectDetector):
+    """モデルの作成。"""
+    import keras
+    import keras.backend as K
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(od.input_size + (3,))
@@ -47,7 +41,7 @@ def create_network(od: ObjectDetector):
 
     # downsampling
     ref = {}
-    for i, fm_count in enumerate(ObjectDetector.FM_COUNTS):
+    for fm_count in ObjectDetector.FM_COUNTS:
         x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
         x = _downblock(x, 'down{}_block1'.format(fm_count))  # for lateral connection
         assert K.int_shape(x)[1] == fm_count
@@ -58,8 +52,8 @@ def create_network(od: ObjectDetector):
     # x = _downblock(x, 'center_block')
 
     # upsampling
-    for i, fm_count in enumerate(ObjectDetector.FM_COUNTS[::-1]):
-        if i != 0:
+    for fm_count in ObjectDetector.FM_COUNTS[::-1]:
+        if fm_count != ObjectDetector.FM_COUNTS[-1]:
             x = _us(x, 'up{}_us'.format(fm_count))
         x = _upblock(x, ref['down{}'.format(fm_count)], 'up{}_block'.format(fm_count))
         ref['up{}'.format(fm_count)] = x
@@ -114,6 +108,45 @@ def create_basenet(large_size):
     return keras.engine.topology.Container(inputs, x, 'basenet')
 
 
+def _branch(x, filters, name):
+    import keras
+    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c1')(x)
+    x = keras.layers.Dropout(0.25, name=name + '_drop')(x)
+    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
+    return x
+
+
+def _downblock(input_x, name):
+    import keras
+    import keras.backend as K
+    assert K.int_shape(input_x)[-1] in (128, 256)
+    x = inputs = keras.layers.Input(K.int_shape(input_x)[1:])
+    for branch in range(4):
+        b = _branch(x, 256 // 4, name=name + '_b' + str(branch))
+        x = keras.layers.Concatenate()([x, b])
+    x = tk.dl.conv2d(256, (1, 1), padding='same', activation='relu', name=name + '_comp')(x)
+    return keras.engine.topology.Container(inputs, x, name)(input_x)
+
+
+def _us(x, name):
+    import keras
+    import keras.backend as K
+    assert K.int_shape(x)[-1] == 256
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
+    x = keras.layers.UpSampling2D(name=name + '_up')(x)
+    return x
+
+
+def _upblock(x, b, name):
+    import keras
+    import keras.backend as K
+    assert K.int_shape(x)[-1] == 256
+    assert K.int_shape(b)[-1] == 256
+    x = keras.layers.Concatenate(name=name + '_concat')([x, b])
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
+    return x
+
+
 def create_pm(od: ObjectDetector):
     """Prediction module."""
     import keras
@@ -136,17 +169,17 @@ def _create_pm(x, size_ix, ar_ix, od: ObjectDetector):
     x = tk.dl.conv2d(filters * 2, (1, 1), padding='same', activation='relu', use_bn=False,
                      name='pm-{}-{}_sq'.format(size_ix, ar_ix))(x)
     # 軽くDenseNet
-    for depth in range(2):
+    for depth in range(4):
         b = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', use_bn=False,
                          name='pm-{}-{}_conv{}'.format(size_ix, ar_ix, depth))(x)
         x = keras.layers.Concatenate()([x, b])
     # 最終層(conf)
-    conf = tk.dl.conv2d(od.nb_classes, (3, 3), padding='same',
+    conf = tk.dl.conv2d(od.nb_classes, (1, 1), padding='same',
                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                         bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                         activation='softmax', use_bn=False,
                         name='pm-{}-{}-conf'.format(size_ix, ar_ix))(x)
     # 最終層(loc)
-    loc = tk.dl.conv2d(4, (3, 3), padding='same', activation=None, use_bn=False,
+    loc = tk.dl.conv2d(4, (1, 1), padding='same', activation=None, use_bn=False,
                        name='pm-{}-{}-loc'.format(size_ix, ar_ix))(x)
     return conf, loc
