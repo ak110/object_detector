@@ -73,7 +73,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         model = create_network(od)
         model.summary(print_fn=logger.debug)
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
-        keras.utils.plot_model(model, str(result_dir.joinpath('model.png')), show_shapes=True)
+        keras.utils.plot_model(model, str(result_dir.joinpath('model.png')))
 
         # 学習済み重みの読み込み
         if args.warm:
