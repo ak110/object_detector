@@ -17,20 +17,23 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
         print('')
 
     pred_classes_list = []
+    pred_confs_list = []
     pred_locs_list = []
     steps = gen.steps_per_epoch(len(X_test), batch_size)
     with tqdm(total=steps, desc='evaluate', ascii=True, ncols=100) as pbar:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
             pred = model.predict(X_batch)
             pred_classes, pred_confs, pred_locs = od.decode_predictions(pred)
-            pred_classes_list += pred_classes
-            pred_locs_list += pred_locs
+            pred_classes_list.extend(pred_classes)
+            pred_confs_list.extend(pred_confs)
+            pred_locs_list.extend(pred_locs)
             if i == 0:
                 save_dir = result_dir.joinpath('___check')
                 for j, (pcl, pcf, pl) in enumerate(zip(pred_classes, pred_confs, pred_locs)):
+                    mask = pcf >= 0.6  # SSDの真似
                     tk.ml.plot_objects(
                         X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
-                        pcl, pcf, pl, CLASS_NAMES)
+                        pcl[mask], pcf[mask], pl[mask], CLASS_NAMES)
             pbar.update()
             if i + 1 >= steps:
                 break
@@ -38,8 +41,12 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     gt_classes_list = np.array([y.classes for y in y_test])
     gt_bboxes_list = np.array([y.bboxes for y in y_test])
     gt_difficults_list = np.array([y.difficults for y in y_test])
-    map1 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list, pred_classes_list, pred_locs_list, use_voc2007_metric=False)
-    map2 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list, pred_classes_list, pred_locs_list, use_voc2007_metric=True)
+    map1 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list,
+                             pred_classes_list, pred_confs_list, pred_locs_list,
+                             use_voc2007_metric=False)
+    map2 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list,
+                             pred_classes_list, pred_confs_list, pred_locs_list,
+                             use_voc2007_metric=True)
 
     sys.stdout.flush()
     sys.stderr.flush()
