@@ -111,6 +111,7 @@ results_debug/
 
 # 当面は実行結果もignore
 results/
+results_pretrain/
 
 # 容量が大きいものは必要ならまた作ることにする。(保存は一応しておく)
 model.png
