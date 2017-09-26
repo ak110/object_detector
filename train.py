@@ -37,6 +37,7 @@ def _main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
+    parser.add_argument('--pretrained', help='pretrained start。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     args = parser.parse_args()
@@ -72,18 +73,20 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     with tk.dl.session():
         model = create_network(od)
         model.summary(print_fn=logger.debug)
+        logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
-        keras.utils.plot_model(model, str(result_dir.joinpath('model.png')))
+
+        # keras.utils.plot_model(model, str(result_dir.joinpath('model.png')))
 
         # 学習済み重みの読み込み
-        if args.warm:
-            model_path = result_dir.joinpath('model.best.h5')
-            tk.dl.load_weights(model, model_path)
-            logger.debug('warm start: %s', model_path.name)
-        else:
+        if args.pretrained:
             model_path = result_dir.parent.joinpath('results_pretrain', 'model.h5')
             tk.dl.load_weights(model, model_path)
             logger.debug('load pretrained weights: %s', model_path.name)
+        elif args.warm:
+            model_path = result_dir.joinpath('model.best.h5')
+            tk.dl.load_weights(model, model_path)
+            logger.debug('warm start: %s', model_path.name)
 
         # マルチGPU対応
         gpu_count = tk.get_gpu_count()
@@ -126,7 +129,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             callbacks=callbacks)
 
         model.save(str(result_dir.joinpath('model.h5')))
-        sklearn.externals.joblib.dump(od, str(result_dir.joinpath('model.pkl')))
 
         # 最終結果表示
         evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, None, result_dir)

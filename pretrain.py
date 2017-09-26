@@ -54,6 +54,7 @@ def _run2(logger, result_dir: pathlib.Path):
 
     model = create_pretrain_network(input_shape, nb_classes)
     model.summary(print_fn=logger.debug)
+    logger.debug('network depth: %d', tk.dl.count_network_depth(model))
     tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
     keras.utils.plot_model(model, str(result_dir.joinpath('model.png')), show_shapes=True)
 

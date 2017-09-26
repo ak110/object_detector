@@ -55,7 +55,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         # モデルの読み込み
         od = sklearn.externals.joblib.load(str(result_dir.joinpath('model.pkl')))
         model = create_network(od)
-        model.load_weights(str(result_dir.joinpath('model.h5')), by_name=True)
+        model.load_weights(str(result_dir.joinpath('model.best.h5')), by_name=True)
 
         # 評価
         gen = Generator(image_size=od.input_size, od=od)

@@ -197,14 +197,13 @@ class ObjectDetector(object):
 
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)  # 各batch毎のobj数。
-        obj_div = K.maximum(obj_count, K.ones_like(obj_count))
 
-        loss_conf = ObjectDetector._loss_conf(gt_confs, pred_confs, obj_div)
-        loss_loc = ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_div)
+        loss_conf = ObjectDetector._loss_conf(gt_confs, pred_confs, obj_count)
+        loss_loc = ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
         return loss_conf + loss_loc
 
     @staticmethod
-    def _loss_conf(gt_confs, pred_confs, obj_div):
+    def _loss_conf(gt_confs, pred_confs, obj_count):
         """分類のloss。"""
         import keras.backend as K
         if True:
@@ -223,7 +222,7 @@ class ObjectDetector(object):
             # ただし、miningはlossの大きいもの優先なので必ずしもこの通りではない。
             # 仮に3→9とすると0.988。100で0.9、200で0.8。
             loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs, alpha=0.99)
-            loss = K.sum(loss, axis=-1) / obj_div  # normalized by the number of anchors assigned to a ground-truth box
+            loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
         else:
             loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.99)
             loss = K.maximum(loss - 0.01, 0)  # clip
@@ -231,26 +230,24 @@ class ObjectDetector(object):
         return loss
 
     @staticmethod
-    def _loss_loc(gt_locs, pred_locs, obj_mask, obj_div):
+    def _loss_loc(gt_locs, pred_locs, obj_mask, obj_count):
         """位置のloss。"""
         import keras.backend as K
         loss = tk.dl.l1_smooth_loss(gt_locs, pred_locs)
-        loss = K.sum(loss * obj_mask, axis=-1) / obj_div  # mean
+        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
         return loss
 
     @staticmethod
     def loss_loc(y_true, y_pred):
-        """位置の損失項。"""
+        """位置の損失項。(metrics用)"""
         import keras.backend as K
         gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
         pred_locs = y_pred[:, :, -4:]
 
-        obj_mask = gt_confs[:, :, 0] < 0.5  # 背景以外
-        obj_mask = K.cast(obj_mask, K.floatx())
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
-        obj_div = K.maximum(obj_count, K.ones_like(obj_count))
 
-        return ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_div)
+        return ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
 
     @staticmethod
     def acc_bg(y_true, y_pred):
@@ -259,8 +256,7 @@ class ObjectDetector(object):
         gt_confs = y_true[:, :, :-4]
         pred_confs = y_pred[:, :, :-4]
 
-        bg_mask = gt_confs[:, :, 0] >= 0.5  # 背景
-        bg_mask = K.cast(bg_mask, K.floatx())
+        bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
         bg_count = K.sum(bg_mask, axis=-1)
 
         acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
@@ -273,8 +269,7 @@ class ObjectDetector(object):
         gt_confs = y_true[:, :, :-4]
         pred_confs = y_pred[:, :, :-4]
 
-        obj_mask = gt_confs[:, :, 0] < 0.5  # 背景以外
-        obj_mask = K.cast(obj_mask, K.floatx())
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
 
         acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
@@ -286,8 +281,9 @@ class ObjectDetector(object):
         IOUが0.5以上のものを全部割り当てる＆割り当らなかったらIOUが一番大きいものに割り当てる。
         1つのprior boxに複数割り当たってしまっていたらIOUが一番大きいものを採用。
         """
+        _IOU_TH = 0.5 + 1e-7
         confs = np.zeros((len(y_gt), len(self.pb_locs), self.nb_classes), dtype=np.float32)
-        confs[:, :, 0] = 1
+        confs[:, :, 0] = 1  # bg
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
         # 画像ごとのループ
         for i, y in enumerate(y_gt):
@@ -297,43 +293,47 @@ class ObjectDetector(object):
             pb_confs = np.zeros((len(self.pb_locs),), dtype=float)  # 割り当てようとしているconfidence
             pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # 割り当てようとしているgt_ix
 
-            # 大きいものから順に割り当てる (小さいものが出来るだけうまく割当たって欲しいので)
+            # 大きいものから順に割り当てる (小さいものが出来るだけうまく割り当たって欲しいので)
             gt_ix_list = np.argsort(-np.prod(y.bboxes[:, 2:] - y.bboxes[:, : 2], axis=-1))
             for gt_ix in gt_ix_list:
                 if not _TRAIN_DIFFICULT and y.difficult[gt_ix]:
                     continue
-                pb_ixs = np.where(iou[:, gt_ix] >= 0.5)[0]
+                pb_ixs = np.where(iou[:, gt_ix] >= _IOU_TH)[0]
                 if pb_ixs.any():
                     # IOUが0.5以上のものがあるなら全部割り当てる
                     iou_list = iou[pb_ixs, gt_ix]
-                    if True:
-                        pb_confs[pb_ixs] = iou_list
-                    else:
-                        obj_confs = iou_list * (0.6 / iou_list.max()) + 0.2  # iouが最大のもの以外はconfが低めになるように割合で割り当てる
-                        assert (obj_confs > 0.5).all() and (obj_confs <= 0.8).all()
-                        pb_confs[pb_ixs] = obj_confs  # 最大でないものは0.5 ～ 0.8
-                        pb_confs[iou[pb_ixs, gt_ix].argmax()] = 1.0  # 最大のものだけ1.0
+                    pb_confs[pb_ixs] = iou_list  # IOU自体を予測させてみる
                     pb_candidates[pb_ixs] = gt_ix
                 else:
                     # 0.5以上のものが無ければIOUが一番大きいものに割り当てる
                     pb_ixs = iou[:, gt_ix].argmax()
                     if pb_candidates[pb_ixs] >= 0:  # 割り当て済みな場合
-                        if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
-                            warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
-                    pb_confs[pb_ixs] = 1
+                        if iou[pb_ixs, pb_candidates[pb_ixs]] < _IOU_TH:
+                            # ↓何故か毎回出てしまうためとりあえずコメントアウト
+                            # warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
+                            pass
+                    pb_confs[pb_ixs] = _IOU_TH  # IOU自体を予測させてみる
                     pb_candidates[pb_ixs] = gt_ix
 
-            for pb_ix in np.where(pb_candidates >= 0)[0]:
+            pb_ixs = np.where(pb_candidates >= 0)[0]
+            assert len(pb_ixs) >= 1
+            for pb_ix in pb_ixs:
                 conf = pb_confs[pb_ix]
                 gt_ix = pb_candidates[pb_ix]
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
-                assert 0.5 <= conf <= 1
-                # confs: 該当のクラスだけ>0.5、残りはbg、他は0にする。
+                assert _IOU_TH <= conf <= 1
+                assert 0 <= 1 - conf < 0.5
+                # confs: 該当のクラスだけ>=_IOU_TH、残りはbg、他は0にする。
                 confs[i, pb_ix, 0] = 1 - conf  # bg
                 confs[i, pb_ix, class_id] = conf
                 # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
                 locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+
+        # 1画像あたり1個以上割り当たっていることの確認 (ゼロ除算が怖い)
+        obj_mask = (confs[:, :, 0] < 0.5).astype(float)
+        obj_count = np.sum(obj_mask, axis=-1)
+        assert (obj_count >= 1).all()
 
         # 分類の教師が合計≒1になっていることの確認
         assert (np.abs(confs.sum(axis=-1) - 1) < 1e-7).all()
@@ -341,7 +341,7 @@ class ObjectDetector(object):
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
 
-    def decode_predictions(self, predictions, top_k=200, conf_threshold=0.01, nms_threshold=0.45):
+    def decode_predictions(self, predictions, top_k=200, nms_threshold=0.45):
         """予測結果をデコードする。
 
         出力は以下の3つの値。画像ごとにconfidenceの降順。
@@ -359,7 +359,7 @@ class ObjectDetector(object):
         # 画像毎にループ
         for pred_confs, pred_locs in zip(confs_list, locs_list):
             pred_obj_confs = pred_confs[:, 1:].max(axis=-1)  # 背景以外のconfidenceの最大値
-            conf_mask = pred_obj_confs > conf_threshold
+            conf_mask = pred_obj_confs.argsort()[::-1][:top_k * 4]  # 適当に上位のみ見る
             # 座標のデコード
             decoded_confs = pred_obj_confs[conf_mask]
             decoded_classes = pred_confs[conf_mask, 1:].argmax(axis=-1)  # 背景以外でのクラスの判定結果
