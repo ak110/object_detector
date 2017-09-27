@@ -14,15 +14,17 @@ def create_pretrain_network(input_shape, nb_classes):
     # ベースネットワーク
     x = inputs = keras.layers.Input(input_shape)
     x = _create_basenet(x)
-    assert K.int_shape(x)[1] == input_shape[0] // 4
 
-    # downsampling (最初の部分のみ)
-    fm_count = ObjectDetector.FM_COUNTS[0]
-    x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-    x = _downblock(x, 'down{}_block'.format(fm_count))
+    # downsampling
+    for fm_count in ObjectDetector.FM_COUNTS:
+        x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
+        x = _downblock(x, 'down{}_block'.format(fm_count))
+
+    # center
+    x = _downblock(x, 'center_block')
 
     # prediction
-    x = keras.layers.GlobalMaxPooling2D('avgpool')(x)
+    x = keras.layers.GlobalAveragePooling2D(name='pool')(x)
     x = keras.layers.Dense(nb_classes, activation='softmax', kernel_regularizer='l2', name='pretrain_predictions')(x)
 
     return keras.models.Model(inputs=inputs, outputs=x)
@@ -82,9 +84,11 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
     for branch in range(branches):
         if bottleneck:
             b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='relu', name=name + '_b' + str(branch) + '_c1')(x)
+            b = keras.layers.Dropout(0.25)(b)
             b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='relu', name=name + '_b' + str(branch) + '_c2')(b)
         else:
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='relu', name=name + '_b' + str(branch))(x)
+            b = keras.layers.Dropout(0.25)(x)
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='relu', name=name + '_b' + str(branch))(b)
         x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_concat')([x, b])
     if compress:
         x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='relu', name=name + '_sq')(x)
@@ -129,11 +133,14 @@ def _create_pm(od, ref):
                 'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv2'),
                 'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv3'),
                 'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
+                                            kernel_regularizer=l2(1e-4),
                                             bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                             bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                                             activation='softmax',
                                             name=prefix + '_conf'),
                 'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+                                           kernel_regularizer=l2(1e-4),
+                                           bias_regularizer=l2(1e-4),
                                            name=prefix + '_loc'),
             }
 
@@ -142,7 +149,8 @@ def _create_pm(od, ref):
         x = tk.dl.conv2d(64, (1, 1), activation='relu', name=prefix + '_sq')(x)
         # DenseBlock (BNだけ非共有)
         for branch in range(4):
-            b = sl['c' + str(branch)](x)
+            b = keras.layers.Dropout(0.25, name='{}_conv{}_drop'.format(prefix, branch))(x)
+            b = sl['c' + str(branch)](b)
             b = keras.layers.BatchNormalization(name='{}_conv{}_bn'.format(prefix, branch))(b)
             b = keras.layers.Activation('relu', name='{}_conv{}_act'.format(prefix, branch))(b)
             x = keras.layers.Concatenate(name='{}_conv{}_concat'.format(prefix, branch))([x, b])

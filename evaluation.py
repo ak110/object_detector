@@ -12,7 +12,7 @@ from voc_data import CLASS_NAMES
 
 def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir):
     """`mAP`を算出してprintする。"""
-    if epoch is not None and not (epoch % 16 == 0 or epoch & (epoch - 1) == 0):
+    if epoch is not None and not ((epoch + 1) % 16 == 0 or (epoch + 1) & epoch == 0):
         return  # 重いので16回あたり1回だけ実施
     if epoch is not None:
         print('')

@@ -11,7 +11,7 @@ import sklearn.externals.joblib
 import pytoolkit as tk
 from model import ObjectDetector
 
-_BATCH_SIZE = 100
+_BATCH_SIZE = 25
 _MAX_EPOCH = 100
 _BASE_LR = 1e-3
 
@@ -46,7 +46,7 @@ def _run(logger, result_dir: pathlib.Path):
 def _run2(logger, result_dir: pathlib.Path):
     # データの読み込み
     import keras
-    input_shape = (32, 32, 3)
+    input_shape = (256, 256, 3)
     nb_classes = 100
     (X_train, y_train), (X_test, y_test) = keras.datasets.cifar100.load_data()
     y_train = keras.utils.to_categorical(y_train, nb_classes)

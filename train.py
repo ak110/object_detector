@@ -19,7 +19,7 @@ from generator import Generator
 from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
-_BATCH_SIZE = 16
+_BATCH_SIZE = 12
 _MAX_EPOCH = 300
 _MAX_EPOCH_DEBUG = 16
 _BASE_LR = 1e-1  # 1e-3
