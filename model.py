@@ -281,7 +281,6 @@ class ObjectDetector(object):
         IOUが0.5以上のものを全部割り当てる＆割り当らなかったらIOUが一番大きいものに割り当てる。
         1つのprior boxに複数割り当たってしまっていたらIOUが一番大きいものを採用。
         """
-        _IOU_TH = 0.5 + 1e-7
         confs = np.zeros((len(y_gt), len(self.pb_locs), self.nb_classes), dtype=np.float32)
         confs[:, :, 0] = 1  # bg
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
@@ -298,21 +297,22 @@ class ObjectDetector(object):
             for gt_ix in gt_ix_list:
                 if not _TRAIN_DIFFICULT and y.difficult[gt_ix]:
                     continue
-                pb_ixs = np.where(iou[:, gt_ix] >= _IOU_TH)[0]
+                pb_ixs = np.where(iou[:, gt_ix] >= 0.5)[0]
                 if pb_ixs.any():
                     # IOUが0.5以上のものがあるなら全部割り当てる
                     iou_list = iou[pb_ixs, gt_ix]
-                    pb_confs[pb_ixs] = iou_list  # IOU自体を予測させてみる
+                    score = (1 + iou_list) / 2  # IOUを1寄りに少し変換した値を予測させてみる。
+                    pb_confs[pb_ixs] = score
                     pb_candidates[pb_ixs] = gt_ix
                 else:
                     # 0.5以上のものが無ければIOUが一番大きいものに割り当てる
                     pb_ixs = iou[:, gt_ix].argmax()
                     if pb_candidates[pb_ixs] >= 0:  # 割り当て済みな場合
-                        if iou[pb_ixs, pb_candidates[pb_ixs]] < _IOU_TH:
+                        if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
                             # ↓何故か毎回出てしまうためとりあえずコメントアウト
                             # warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
                             pass
-                    pb_confs[pb_ixs] = _IOU_TH  # IOU自体を予測させてみる
+                    pb_confs[pb_ixs] = 0.75  # (1 + 0.5) / 2: IOUを1寄りに少し変換した値を予測させてみる。
                     pb_candidates[pb_ixs] = gt_ix
 
             pb_ixs = np.where(pb_candidates >= 0)[0]
@@ -322,7 +322,7 @@ class ObjectDetector(object):
                 gt_ix = pb_candidates[pb_ix]
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
-                assert _IOU_TH <= conf <= 1
+                assert 0.5 <= conf <= 1
                 assert 0 <= 1 - conf < 0.5
                 # confs: 該当のクラスだけ>=_IOU_TH、残りはbg、他は0にする。
                 confs[i, pb_ix, 0] = 1 - conf  # bg
