@@ -61,17 +61,3 @@ def plot_truth(X_test, y_test, save_dir):
         tk.ml.plot_objects(
             X, save_dir.joinpath(pathlib.Path(X).name + '.png'),
             y.classes, None, y.bboxes, CLASS_NAMES)
-
-
-def plot_result(od, model, gen, X_test, batch_size, save_dir):
-    """結果の画像化。"""
-    pred = model.predict_generator(
-        gen.flow(X_test, batch_size=batch_size),
-        gen.steps_per_epoch(len(X_test), batch_size),
-        verbose=1)
-    pred_classes_list, pred_confs_list, pred_locs_list = od.decode_predictions(pred)
-
-    for X, pred_classes, pred_confs, pred_locs in zip(X_test, pred_classes_list, pred_confs_list, pred_locs_list):
-        tk.ml.plot_objects(
-            X, save_dir.joinpath(pathlib.Path(X).name + '.png'),
-            pred_classes, pred_confs, pred_locs, CLASS_NAMES)

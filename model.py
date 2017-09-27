@@ -7,6 +7,8 @@ import sklearn.metrics
 from tqdm import tqdm
 
 import pytoolkit as tk
+import model_loss
+import model_net
 
 _TRAIN_DIFFICULT = True
 
@@ -47,10 +49,8 @@ class ObjectDetector(object):
         return cls(nb_classes, mean_objets, pb_size_ratios, aspect_ratios)
 
     def __init__(self, nb_classes, mean_objets, pb_size_ratios=(1.5, 2.5), aspect_ratios=(1, 2, 1 / 2, 3, 1 / 3)):
-        from net import INPUT_SIZE
-
         self.nb_classes = nb_classes
-        self.input_size = INPUT_SIZE
+        self.input_size = model_net.INPUT_SIZE
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
         # 1 / fm_countに対する、prior boxの基準サイズの割合。3なら3倍の大きさのものを用意。
@@ -188,93 +188,6 @@ class ObjectDetector(object):
         plt.gcf().savefig(str(result_dir.joinpath('unrec_ars.hist.png')))
         plt.close()
 
-    @staticmethod
-    def loss(y_true, y_pred):
-        """損失関数。"""
-        import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
-        pred_confs, pred_locs = y_pred[:, :, :-4], y_pred[:, :, -4:]
-
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)  # 各batch毎のobj数。
-
-        loss_conf = ObjectDetector._loss_conf(gt_confs, pred_confs, obj_count)
-        loss_loc = ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
-        return loss_conf + loss_loc
-
-    @staticmethod
-    def _loss_conf(gt_confs, pred_confs, obj_count):
-        """分類のloss。"""
-        import keras.backend as K
-        if True:
-            # Focal lossの論文では0.25が良いとしているが、他のパラメータとのバランスに依ると思う。
-            #
-            # SSDではbg : obj = 3 : 1になるようにminingして学習している。
-            # bg : obj = (priorbox - assigned) * (1 - alpha) : assigned * alpha
-            # なので、
-            # alpha = (priorbox - assigned) / (priorbox + assigned * (3 - 1))
-            # となる。
-            # priorbox = 46035
-            # assigned = 60
-            # とすると、
-            # alpha = (46035 - 60) / (46035 + 60 * (3 - 1)) = 0.996
-            #
-            # ただし、miningはlossの大きいもの優先なので必ずしもこの通りではない。
-            # 仮に3→9とすると0.988。100で0.9、200で0.8。
-            loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs, alpha=0.99)
-            loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
-        else:
-            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.99)
-            loss = K.maximum(loss - 0.01, 0)  # clip
-            loss = K.mean(loss, axis=-1)
-        return loss
-
-    @staticmethod
-    def _loss_loc(gt_locs, pred_locs, obj_mask, obj_count):
-        """位置のloss。"""
-        import keras.backend as K
-        loss = tk.dl.l1_smooth_loss(gt_locs, pred_locs)
-        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
-        return loss
-
-    @staticmethod
-    def loss_loc(y_true, y_pred):
-        """位置の損失項。(metrics用)"""
-        import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
-        pred_locs = y_pred[:, :, -4:]
-
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-
-        return ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
-
-    @staticmethod
-    def acc_bg(y_true, y_pred):
-        """背景の正解率。"""
-        import keras.backend as K
-        gt_confs = y_true[:, :, :-4]
-        pred_confs = y_pred[:, :, :-4]
-
-        bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
-        bg_count = K.sum(bg_mask, axis=-1)
-
-        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-        return K.sum(acc * bg_mask, axis=-1) / bg_count
-
-    @staticmethod
-    def acc_obj(y_true, y_pred):
-        """物体の正解率。"""
-        import keras.backend as K
-        gt_confs = y_true[:, :, :-4]
-        pred_confs = y_pred[:, :, :-4]
-
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-
-        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-        return K.sum(acc * obj_mask, axis=-1) / obj_count
-
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
         """学習用の`y_true`の作成。
 
@@ -330,13 +243,13 @@ class ObjectDetector(object):
                 # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
                 locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
 
-        # 1画像あたり1個以上割り当たっていることの確認 (ゼロ除算が怖い)
-        obj_mask = (confs[:, :, 0] < 0.5).astype(float)
-        obj_count = np.sum(obj_mask, axis=-1)
-        assert (obj_count >= 1).all()
+        # # 1画像あたり1個以上割り当たっていることの確認 (ゼロ除算が怖い)
+        # obj_mask = (confs[:, :, 0] < 0.5).astype(float)
+        # obj_count = np.sum(obj_mask, axis=-1)
+        # assert (obj_count >= 1).all()
 
-        # 分類の教師が合計≒1になっていることの確認
-        assert (np.abs(confs.sum(axis=-1) - 1) < 1e-7).all()
+        # # 分類の教師が合計≒1になっていることの確認
+        # assert (np.abs(confs.sum(axis=-1) - 1) < 1e-7).all()
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
@@ -397,3 +310,32 @@ class ObjectDetector(object):
         assert len(result_confs) == len(predictions)
         assert len(result_locs) == len(predictions)
         return result_classes, result_confs, result_locs
+
+    @staticmethod
+    def loss(y_true, y_pred):
+        """損失関数。"""
+        return model_loss.multibox_loss(y_true, y_pred)
+
+    @staticmethod
+    def loss_loc(y_true, y_pred):
+        """位置の損失関数。"""
+        return model_loss.multibox_loss_loc(y_true, y_pred)
+
+    @staticmethod
+    def acc_bg(y_true, y_pred):
+        """背景の再現率。"""
+        return model_loss.multibox_acc_bg(y_true, y_pred)
+
+    @staticmethod
+    def acc_obj(y_true, y_pred):
+        """物体の再現率。"""
+        return model_loss.multibox_acc_obj(y_true, y_pred)
+
+    def create_network(self):
+        """ネットワークの作成"""
+        return model_net.create_network(self)
+
+    @staticmethod
+    def create_pretrain_network(input_shape, nb_classes):
+        """事前学習用ネットワークの作成"""
+        return model_net.create_pretrain_network(input_shape, nb_classes)

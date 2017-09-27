@@ -1,7 +1,6 @@
 """ObjectDetectionのモデル。"""
 
 import pytoolkit as tk
-from model import ObjectDetector
 
 INPUT_SIZE = (325, 325)
 
@@ -10,10 +9,11 @@ def create_pretrain_network(input_shape, nb_classes):
     """モデルの作成。"""
     import keras
     import keras.backend as K
+    from model import ObjectDetector
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(input_shape)
-    x = create_basenet(x)
+    x = _create_basenet(x)
     assert K.int_shape(x)[1] == input_shape[0] // 4
 
     # downsampling (最初の部分のみ)
@@ -28,14 +28,15 @@ def create_pretrain_network(input_shape, nb_classes):
     return keras.models.Model(inputs=inputs, outputs=x)
 
 
-def create_network(od: ObjectDetector):
+def create_network(od):
     """モデルの作成。"""
     import keras
     import keras.backend as K
+    from model import ObjectDetector
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(od.input_size + (3,))
-    x = create_basenet(x)
+    x = _create_basenet(x)
     assert K.int_shape(x)[1] == ObjectDetector.FM_COUNTS[0] * 2
 
     # downsampling
@@ -57,7 +58,7 @@ def create_network(od: ObjectDetector):
         ref['up{}'.format(fm_count)] = x
 
     # prediction module
-    confs, locs = create_pm(od, ref)
+    confs, locs = _create_pm(od, ref)
 
     # いったんくっつける (損失関数の中で分割して使う)
     outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs])
@@ -65,7 +66,7 @@ def create_network(od: ObjectDetector):
     return keras.models.Model(inputs=inputs, outputs=outputs)
 
 
-def create_basenet(x):
+def _create_basenet(x):
     """ベースネットワークの作成。"""
     import keras
     x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='relu', name='stage1_conv1')(x)  # 160x160
@@ -111,10 +112,11 @@ def _upblock(x, b, name):
     return x
 
 
-def create_pm(od, ref):
+def _create_pm(od, ref):
     """Prediction module."""
     import keras
     from keras.regularizers import l2
+    from model import ObjectDetector
 
     # スケール間で重みを共有するレイヤーの作成
     shared_layers = {}

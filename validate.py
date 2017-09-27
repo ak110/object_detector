@@ -12,7 +12,6 @@ import sklearn.externals.joblib
 import pytoolkit as tk
 from evaluation import evaluate
 from generator import Generator
-from net import create_network
 from voc_data import load_data
 
 _BATCH_SIZE = 16
@@ -54,7 +53,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     with tk.dl.session():
         # モデルの読み込み
         od = sklearn.externals.joblib.load(str(result_dir.joinpath('model.pkl')))
-        model = create_network(od)
+        model = od.create_network()
         model.load_weights(str(result_dir.joinpath('model.best.h5')), by_name=True)
 
         # 評価

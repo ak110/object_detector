@@ -9,7 +9,7 @@ import numpy as np
 import sklearn.externals.joblib
 
 import pytoolkit as tk
-from net import create_pretrain_network
+from model import ObjectDetector
 
 _BATCH_SIZE = 100
 _MAX_EPOCH = 100
@@ -52,7 +52,7 @@ def _run2(logger, result_dir: pathlib.Path):
     y_train = keras.utils.to_categorical(y_train, nb_classes)
     y_test = keras.utils.to_categorical(y_test, nb_classes)
 
-    model = create_pretrain_network(input_shape, nb_classes)
+    model = ObjectDetector.create_pretrain_network(input_shape, nb_classes)
     model.summary(print_fn=logger.debug)
     logger.debug('network depth: %d', tk.dl.count_network_depth(model))
     tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))

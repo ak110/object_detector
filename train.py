@@ -17,7 +17,6 @@ import pytoolkit as tk
 from evaluation import evaluate
 from generator import Generator
 from model import ObjectDetector
-from net import create_network
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 16
@@ -72,7 +71,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     import keras.backend as K
     K.set_image_dim_ordering('tf')
     with tk.dl.session():
-        model = create_network(od)
+        model = od.create_network()
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
