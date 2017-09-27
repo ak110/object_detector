@@ -1,6 +1,7 @@
 """ObjectDetectionのモデル。"""
 import warnings
 
+import joblib
 import numpy as np
 import sklearn.cluster
 import sklearn.metrics
@@ -246,7 +247,7 @@ class ObjectDetector(object):
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
 
-    def decode_predictions(self, predictions, top_k=200, nms_threshold=0.45):
+    def decode_predictions(self, predictions, top_k=200, nms_threshold=0.45, parallel=None):
         """予測結果をデコードする。
 
         出力は以下の3つの値。画像ごとにconfidenceの降順。
@@ -258,50 +259,62 @@ class ObjectDetector(object):
         assert predictions.shape[1] == len(self.pb_locs)
         assert predictions.shape[2] == self.nb_classes + 4
         confs_list, locs_list = predictions[:, :, :-4], predictions[:, :, -4:]
-        result_classes = []
-        result_confs = []
-        result_locs = []
         # 画像毎にループ
-        for pred_confs, pred_locs in zip(confs_list, locs_list):
-            pred_obj_confs = pred_confs[:, 1:].max(axis=-1)  # 背景以外のconfidenceの最大値
-            conf_mask = pred_obj_confs.argsort()[::-1][:top_k * 4]  # 適当に上位のみ見る
-            # 座標のデコード
-            decoded_confs = pred_obj_confs[conf_mask]
-            decoded_classes = pred_confs[conf_mask, 1:].argmax(axis=-1)  # 背景以外でのクラスの判定結果
-            decoded_locs = self.pb_locs[conf_mask, :] + pred_locs[conf_mask, :] * self.pb_scales[conf_mask, :]
-            decoded_locs = np.clip(decoded_locs, 0, 1)  # はみ出ている分はクリッピング
-            # クラスごとに処理
-            img_classes = []
-            img_confs = []
-            img_locs = []
-            for target_class in range(1, self.nb_classes):
-                targets = decoded_classes == target_class - 1
-                if not targets.any():
-                    continue
-                # 重複を除くtop_k個を採用
-                target_confs = decoded_confs[targets]
-                target_locs = decoded_locs[targets, :]
-                idx = tk.ml.non_maximum_suppression(target_locs, target_confs, top_k, nms_threshold)
-                # 結果
-                img_classes.extend([target_class] * len(idx))
-                img_confs.extend(target_confs[idx])
-                img_locs.extend(target_locs[idx])
-            # 最終結果 (confidence降順に並べつつもう一度top_k)
-            img_confs = np.array(img_confs)
-            sorted_indices = img_confs.argsort()[::-1][:top_k]
-            img_confs = img_confs[sorted_indices]
-            img_classes = np.array(img_classes)[sorted_indices]
-            img_locs = np.array(img_locs)[sorted_indices]
-            assert img_confs.shape == (len(sorted_indices),)
-            assert img_classes.shape == (len(sorted_indices),)
-            assert img_locs.shape == (len(sorted_indices), 4)
-            result_confs.append(img_confs)
-            result_classes.append(img_classes)
-            result_locs.append(img_locs)
+        if parallel:
+            jobs = [joblib.delayed(self._decode_prediction,
+                                   check_pickle=False)(pred_confs, pred_locs,
+                                                       top_k, nms_threshold)
+                    for pred_confs, pred_locs
+                    in zip(confs_list, locs_list)]
+            result_classes, result_confs, result_locs = zip(*parallel(jobs))
+        else:
+            result_classes = []
+            result_confs = []
+            result_locs = []
+            for pred_confs, pred_locs in zip(confs_list, locs_list):
+                img_classes, img_confs, img_locs = self._decode_prediction(pred_confs, pred_locs, top_k, nms_threshold)
+                result_classes.append(img_classes)
+                result_confs.append(img_confs)
+                result_locs.append(img_locs)
         assert len(result_classes) == len(predictions)
         assert len(result_confs) == len(predictions)
         assert len(result_locs) == len(predictions)
         return result_classes, result_confs, result_locs
+
+    def _decode_prediction(self, pred_confs, pred_locs, top_k, nms_threshold):
+        pred_obj_confs = pred_confs[:, 1:].max(axis=-1)  # 背景以外のconfidenceの最大値
+        conf_mask = pred_obj_confs.argsort()[::-1][:top_k * 4]  # 適当に上位のみ見る
+        # 座標のデコード
+        decoded_confs = pred_obj_confs[conf_mask]
+        decoded_classes = pred_confs[conf_mask, 1:].argmax(axis=-1)  # 背景以外でのクラスの判定結果
+        decoded_locs = self.pb_locs[conf_mask, :] + pred_locs[conf_mask, :] * self.pb_scales[conf_mask, :]
+        decoded_locs = np.clip(decoded_locs, 0, 1)  # はみ出ている分はクリッピング
+        # クラスごとに処理
+        img_classes = []
+        img_confs = []
+        img_locs = []
+        for target_class in range(1, self.nb_classes):
+            targets = decoded_classes == target_class - 1
+            if not targets.any():
+                continue
+            # 重複を除くtop_k個を採用
+            target_confs = decoded_confs[targets]
+            target_locs = decoded_locs[targets, :]
+            idx = tk.ml.non_maximum_suppression(target_locs, target_confs, top_k, nms_threshold)
+            # 結果
+            img_classes.extend([target_class] * len(idx))
+            img_confs.extend(target_confs[idx])
+            img_locs.extend(target_locs[idx])
+        # 最終結果 (confidence降順に並べつつもう一度top_k)
+        img_confs = np.array(img_confs)
+        sorted_indices = img_confs.argsort()[::-1][:top_k]
+        img_confs = img_confs[sorted_indices]
+        img_classes = np.array(img_classes)[sorted_indices]
+        img_locs = np.array(img_locs)[sorted_indices]
+        assert img_classes.shape == (len(sorted_indices),)
+        assert img_confs.shape == (len(sorted_indices),)
+        assert img_locs.shape == (len(sorted_indices), 4)
+        return img_classes, img_confs, img_locs
 
     @staticmethod
     def loss(y_true, y_pred):
