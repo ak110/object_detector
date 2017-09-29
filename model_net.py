@@ -2,23 +2,17 @@
 
 import pytoolkit as tk
 
-INPUT_SIZE = (325, 325)
+# ベースネットワークの種類: custom, resnet50, xception
+_BASENET_TYPE = 'resnet50'
 
 
 def create_pretrain_network(input_shape, nb_classes):
     """モデルの作成。"""
     import keras
-    import keras.backend as K
-    from model import ObjectDetector
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(input_shape)
-    x = _create_basenet(x)
-
-    # downsampling
-    for fm_count in ObjectDetector.FM_COUNTS:
-        x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-        x = _downblock(x, 'down{}_block'.format(fm_count))
+    x, _ = _create_basenet(x)
 
     # center
     x = _downblock(x, 'center_block')
@@ -33,21 +27,11 @@ def create_pretrain_network(input_shape, nb_classes):
 def create_network(od):
     """モデルの作成。"""
     import keras
-    import keras.backend as K
     from model import ObjectDetector
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(od.input_size + (3,))
-    x = _create_basenet(x)
-    assert K.int_shape(x)[1] == ObjectDetector.FM_COUNTS[0] * 2
-
-    # downsampling
-    ref = {}
-    for fm_count in ObjectDetector.FM_COUNTS:
-        x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-        x = _downblock(x, 'down{}_block'.format(fm_count))
-        assert K.int_shape(x)[1] == fm_count
-        ref['down{}'.format(fm_count)] = x
+    x, ref = _create_basenet(x)
 
     # center
     x = _downblock(x, 'center_block')
@@ -68,14 +52,63 @@ def create_network(od):
     return keras.models.Model(inputs=inputs, outputs=outputs)
 
 
+def get_input_size():
+    """入力画像サイズ。"""
+    if _BASENET_TYPE == 'custom':
+        return (325, 325)
+    elif _BASENET_TYPE in ('resnet50', 'xception'):
+        return (319, 319)
+    else:
+        assert False
+
+
 def _create_basenet(x):
     """ベースネットワークの作成。"""
     import keras
-    x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='relu', name='stage1_conv1')(x)  # 160x160
-    x = tk.dl.conv2d(64, (3, 3), padding='same', activation='relu', name='stage1_conv2')(x)
-    x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80。DenseNetを参考に最初だけMax。
-    x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
-    return x
+    import keras.backend as K
+    from model import ObjectDetector
+
+    ref = {}
+    if _BASENET_TYPE == 'custom':
+        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='relu', name='stage1_conv1')(x)  # 160x160
+        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='relu', name='stage1_conv2')(x)
+        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80。DenseNetを参考に最初だけMax。
+        x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
+        for fm_count in ObjectDetector.FM_COUNTS:
+            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
+            x = _downblock(x, 'down{}_block'.format(fm_count))
+            ref['down{}'.format(fm_count)] = x
+    elif _BASENET_TYPE in 'resnet50':
+        basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
+        ref['down{}'.format(40)] = basenet.get_layer(name='res4a_branch2a').input
+        ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
+        ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
+        x = ref['down{}'.format(10)]
+        x = tk.dl.conv2d(512, (1, 1), activation='relu', name='pre_squeeze')(x)
+        for fm_count in (5,):
+            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
+            x = _downblock(x, 'down{}_block'.format(fm_count))
+            ref['down{}'.format(fm_count)] = x
+    elif _BASENET_TYPE in 'xception':
+        basenet = keras.applications.Xception(include_top=False, input_tensor=x)
+        ref['down{}'.format(40)] = basenet.get_layer(name='block4_sepconv1_act').input
+        ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
+        ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
+        x = ref['down{}'.format(10)]
+        x = tk.dl.conv2d(512, (1, 1), activation='relu', name='pre_squeeze')(x)
+        for fm_count in (5,):
+            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
+            x = _downblock(x, 'down{}_block'.format(fm_count))
+            ref['down{}'.format(fm_count)] = x
+    else:
+        assert False
+
+    for fm_count in ObjectDetector.FM_COUNTS:
+        assert 'down{}'.format(fm_count) in ref
+        x = ref['down{}'.format(fm_count)]
+        assert K.int_shape(x)[1] == fm_count
+
+    return x, ref
 
 
 def _denseblock(x, inc_filters, branches, bottleneck, compress, name):

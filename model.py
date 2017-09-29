@@ -51,7 +51,7 @@ class ObjectDetector(object):
 
     def __init__(self, nb_classes, mean_objets, pb_size_ratios=(1.5, 2.5), aspect_ratios=(1, 2, 1 / 2, 3, 1 / 3)):
         self.nb_classes = nb_classes
-        self.input_size = model_net.INPUT_SIZE
+        self.input_size = model_net.get_input_size()
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
         # 1 / fm_countに対する、prior boxの基準サイズの割合。3なら3倍の大きさのものを用意。
@@ -219,9 +219,8 @@ class ObjectDetector(object):
                     pb_ixs = iou[:, gt_ix].argmax()
                     if pb_candidates[pb_ixs] >= 0:  # 割り当て済みな場合
                         if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
-                            # ↓何故か毎回出てしまうためとりあえずコメントアウト
-                            # warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
-                            pass
+                            if False:  # ↓何故か毎回出てしまうためとりあえず無効化
+                                warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
                     pb_candidates[pb_ixs] = gt_ix
 
             pb_ixs = np.where(pb_candidates >= 0)[0]
