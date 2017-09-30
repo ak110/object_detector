@@ -143,9 +143,16 @@ def _downblock(x, name):
 
 def _upblock(x, b, name):
     import keras
-    x = keras.layers.Concatenate(name=name + '_concat')([x, b])
-    x = tk.dl.conv2d(256, (1, 1), padding='same', activation='relu', name=name + '_sq')(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c')(x)
+    import keras.backend as K
+    if K.int_shape(x)[-1] != 256:
+        x = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, use_bn=False, use_bias=False, name=name + '_sqx')(x)
+    if K.int_shape(b)[-1] != 256:
+        b = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, use_bn=False, use_bias=False, name=name + '_sqb')(b)
+    x = keras.layers.Add(name=name + '_add')([x, b])
+    x = keras.layers.BatchNormalization(name=name + '_bn')(x)
+    x = keras.layers.Activation('relu', name=name + '_act')(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c1')(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
     return x
 
 
