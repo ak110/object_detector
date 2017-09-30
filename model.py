@@ -357,9 +357,9 @@ class ObjectDetector(object):
         """物体の再現率。"""
         return model_loss.multibox_acc_obj(y_true, y_pred)
 
-    def create_network(self):
+    def create_network(self, freeze=False):
         """ネットワークの作成"""
-        return model_net.create_network(self)
+        return model_net.create_network(self, freeze=freeze)
 
     @staticmethod
     def create_pretrain_network(input_shape, nb_classes):

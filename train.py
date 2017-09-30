@@ -21,9 +21,10 @@ from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 8
 _MAX_EPOCH = 300
+_MAX_EPOCH_FREEZE = 64
 _MAX_EPOCH_DEBUG = 16
-# _BASE_LR = 1e-1
 _BASE_LR = 1e-3
+_BASE_LR_FREEZE = 1e-1
 
 
 def _main():
@@ -39,6 +40,7 @@ def _main():
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--pretrained', help='pretrained start。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
+    parser.add_argument('--freeze', help='学習済みモデル部分を学習しない。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     args = parser.parse_args()
 
@@ -73,7 +75,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     import keras.backend as K
     K.set_image_dim_ordering('tf')
     with tk.dl.session():
-        model = od.create_network()
+        model = od.create_network(freeze=args.freeze)
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
@@ -105,8 +107,12 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         gen = Generator(image_size=od.input_size, od=od)
 
-        max_epoch = _MAX_EPOCH_DEBUG if args.debug else _MAX_EPOCH
-        lr_list = [_BASE_LR] * (max_epoch // 2) + [_BASE_LR / 10] * (max_epoch // 4) + [_BASE_LR / 100] * (max_epoch // 4)
+        if args.freeze:
+            max_epoch = _MAX_EPOCH_FREEZE
+            lr_list = [_BASE_LR_FREEZE] * (max_epoch // 2) + [_BASE_LR_FREEZE / 10] * (max_epoch // 4) + [_BASE_LR_FREEZE / 100] * (max_epoch // 4)
+        else:
+            max_epoch = _MAX_EPOCH_DEBUG if args.debug else _MAX_EPOCH
+            lr_list = [_BASE_LR] * (max_epoch // 2) + [_BASE_LR / 10] * (max_epoch // 4) + [_BASE_LR / 100] * (max_epoch // 4)
 
         callbacks = []
         callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))

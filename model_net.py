@@ -24,14 +24,14 @@ def create_pretrain_network(input_shape, nb_classes):
     return keras.models.Model(inputs=inputs, outputs=x)
 
 
-def create_network(od):
+def create_network(od, freeze):
     """モデルの作成。"""
     import keras
     from model import ObjectDetector
 
     # ベースネットワーク
     x = inputs = keras.layers.Input(od.input_size + (3,))
-    x, ref = _create_basenet(x)
+    x, ref = _create_basenet(x, freeze)
 
     # center
     x = _downblock(x, 'center_block')
@@ -56,13 +56,21 @@ def get_input_size():
     """入力画像サイズ。"""
     if _BASENET_TYPE == 'custom':
         return (325, 325)
-    elif _BASENET_TYPE in ('resnet50', 'xception'):
-        return (319, 319)
     else:
-        assert False
+        assert _BASENET_TYPE in ('resnet50', 'xception')
+        return (319, 319)
 
 
-def _create_basenet(x):
+def get_preprocess_input():
+    """`preprocess_input`を返す。"""
+    if _BASENET_TYPE == 'resnet50':
+        return tk.image.preprocess_input_mean
+    else:
+        assert _BASENET_TYPE in ('custom', 'xception')
+        return tk.image.preprocess_input_abs1
+
+
+def _create_basenet(x, freeze):
     """ベースネットワークの作成。"""
     import keras
     import keras.backend as K
@@ -80,6 +88,9 @@ def _create_basenet(x):
             ref['down{}'.format(fm_count)] = x
     elif _BASENET_TYPE in 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
+        if freeze:
+            for layer in basenet.layers:
+                layer.trainable = False
         ref['down{}'.format(40)] = basenet.get_layer(name='res4a_branch2a').input
         ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
         ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
@@ -91,6 +102,9 @@ def _create_basenet(x):
             ref['down{}'.format(fm_count)] = x
     elif _BASENET_TYPE in 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
+        if freeze:
+            for layer in basenet.layers:
+                layer.trainable = False
         ref['down{}'.format(40)] = basenet.get_layer(name='block4_sepconv1_act').input
         ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
         ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
