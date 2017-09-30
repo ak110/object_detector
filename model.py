@@ -217,6 +217,7 @@ class ObjectDetector(object):
             # prior_boxesとbboxesで重なっているものを探す
             iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
 
+            pb_confs = np.zeros((len(self.pb_locs),), dtype=float)  # 割り当てようとしているconfidence
             pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # 割り当てようとしているgt_ix
 
             # 大きいものから順に割り当てる (小さいものが出来るだけうまく割り当たって欲しいので)
@@ -227,6 +228,9 @@ class ObjectDetector(object):
                 pb_ixs = np.where(iou[:, gt_ix] >= 0.5)[0]
                 if pb_ixs.any():
                     # IOUが0.5以上のものがあるなら全部割り当てる
+                    iou_list = iou[pb_ixs, gt_ix]
+                    score = (1 + iou_list) / 2  # IOUを1寄りに少し変換した値を予測させてみる。
+                    pb_confs[pb_ixs] = score
                     pb_candidates[pb_ixs] = gt_ix
                 else:
                     # 0.5以上のものが無ければIOUが一番大きいものに割り当てる
@@ -235,17 +239,21 @@ class ObjectDetector(object):
                         if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
                             if False:  # ↓何故か毎回出てしまうためとりあえず無効化
                                 warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
+                    pb_confs[pb_ixs] = 0.75  # (1 + 0.5) / 2: IOUを1寄りに少し変換した値を予測させてみる。
                     pb_candidates[pb_ixs] = gt_ix
 
             pb_ixs = np.where(pb_candidates >= 0)[0]
             assert len(pb_ixs) >= 1
             for pb_ix in pb_ixs:
+                conf = pb_confs[pb_ix]
                 gt_ix = pb_candidates[pb_ix]
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
+                assert 0.5 <= conf <= 1
+                assert 0 <= 1 - conf < 0.5
                 # confs: 該当のクラスだけ>=_IOU_TH、残りはbg、他は0にする。
-                confs[i, pb_ix, 0] = 0  # bg
-                confs[i, pb_ix, class_id] = 1
+                confs[i, pb_ix, 0] = 1 - conf  # bg
+                confs[i, pb_ix, class_id] = conf
                 # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
                 locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
 
