@@ -24,40 +24,56 @@ class ObjectDetector(object):
     FM_COUNTS = (40, 20, 10, 5)
 
     @classmethod
-    def create(cls, nb_classes, y_train, pb_size_patterns=3, aspect_ratio_patterns=5):
+    def create(cls, nb_classes, y_train, pb_size_pattern_count=8):
         """訓練データからパラメータを適当に決めてインスタンスを作成する。
 
         gridに配置したときのIOUを直接最適化するのは難しそうなので、
         とりあえず大雑把にKMeansでクラスタ化したりなど。
         """
-        bboxes = np.concatenate([y.bboxes for y in y_train])
         # 平均オブジェクト数
         mean_objets = np.mean([len(y.bboxes) for y in y_train])
-        # サイズ(feature mapのサイズからの相対値)
-        sizes = np.sqrt((bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1]))
-        fm_sizes = 1 / np.array(ObjectDetector.FM_COUNTS)
-        pb_size_ratios = np.concatenate([sizes / fm_size for fm_size in fm_sizes])
-        pb_size_ratios = pb_size_ratios[np.logical_and(pb_size_ratios >= 1, pb_size_ratios < ObjectDetector.FM_COUNTS[-1] + 0.5)]
-        cluster = sklearn.cluster.KMeans(n_clusters=pb_size_patterns, n_jobs=-1)
-        cluster.fit(np.expand_dims(pb_size_ratios, axis=-1))
-        pb_size_ratios = np.sort(cluster.cluster_centers_[:, 0])
-        # アスペクト比
-        log_ars = np.log((bboxes[:, 2] - bboxes[:, 0]) / (bboxes[:, 3] - bboxes[:, 1]))
-        cluster = sklearn.cluster.KMeans(n_clusters=aspect_ratio_patterns, n_jobs=-1)
-        cluster.fit(np.expand_dims(log_ars, axis=-1))
-        aspect_ratios = np.sort(np.exp(cluster.cluster_centers_[:, 0]))
 
-        return cls(nb_classes, mean_objets, pb_size_ratios, aspect_ratios)
+        # bboxのサイズ
+        bboxes = np.concatenate([y.bboxes for y in y_train])
+        bboxes_size_list = bboxes[:, 2:] - bboxes[:, :2]
+        bboxes_base_size_list = bboxes_size_list.min(axis=-1)  # 短辺のサイズのリスト
+        # bboxes_base_size_list = np.sqrt(bboxes_size_list.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
-    def __init__(self, nb_classes, mean_objets, pb_size_ratios=(1.5, 2.5), aspect_ratios=(1, 2, 1 / 2, 3, 1 / 3)):
+        # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
+        tile_sizes = 1 / np.array(ObjectDetector.FM_COUNTS)
+        pb_size_patterns = []
+        for tile_size in tile_sizes:
+            if tile_size == tile_sizes.max():
+                mask = bboxes_base_size_list >= tile_size
+            elif tile_size == tile_sizes.min():
+                mask = bboxes_base_size_list < tile_size * 2
+            else:
+                mask = np.logical_and(bboxes_base_size_list >= tile_size, bboxes_base_size_list < tile_size * 2)
+            pb_size_patterns.append(bboxes_size_list[mask] / tile_size)
+        pb_size_patterns = np.concatenate(pb_size_patterns)
+        assert len(pb_size_patterns.shape) == 2
+        assert pb_size_patterns.shape[1] == 2
+
+        # 相対サイズをクラスタリング
+        cluster = sklearn.cluster.KMeans(n_clusters=pb_size_pattern_count, n_jobs=-1)
+        cluster.fit(np.log(pb_size_patterns))
+        pb_size_patterns = np.exp(cluster.cluster_centers_)
+        assert pb_size_patterns.shape == (pb_size_pattern_count, 2)
+        pb_size_patterns = pb_size_patterns[pb_size_patterns.prod(axis=-1).argsort(), :]  # 面積昇順に並べ替え (一応)
+
+        return cls(nb_classes, mean_objets, pb_size_patterns)
+
+    def __init__(self, nb_classes, mean_objets, pb_size_patterns):
         self.nb_classes = nb_classes
         self.input_size = model_net.get_input_size()
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
-        # 1 / fm_countに対する、prior boxの基準サイズの割合。3なら3倍の大きさのものを用意。
-        self.pb_size_ratios = np.array(pb_size_ratios)
+        # 1 / fm_countに対する、prior boxの基準サイズの割合。[1.5, 0.5] なら横が1.5倍、縦が0.5倍のものを用意。
+        self.pb_size_patterns = pb_size_patterns.astype(np.float32)
+        # 1 / fm_countに対する、prior boxの基準サイズの割合。(縦横の相乗平均)
+        self.pb_size_ratios = np.sort(np.sqrt(pb_size_patterns[:, 0] * pb_size_patterns[:, 1]))
         # アスペクト比のリスト
-        self.aspect_ratios = np.array(aspect_ratios)
+        self.pb_aspect_ratios = np.sort(pb_size_patterns[:, 0] / pb_size_patterns[:, 1])
 
         # shape=(box数, 4)で座標
         self.pb_locs = None
@@ -74,7 +90,7 @@ class ObjectDetector(object):
         assert self.pb_locs.shape == (nb_pboxes, 4)
         assert self.pb_info_indices.shape == (nb_pboxes,)
         assert self.pb_scales.shape == (nb_pboxes, 4)
-        assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_ratios) * len(self.aspect_ratios)
+        assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_patterns)
 
     def _create_prior_boxes(self):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
@@ -85,41 +101,39 @@ class ObjectDetector(object):
         for fm_count in ObjectDetector.FM_COUNTS:
             # 敷き詰める間隔
             tile_size = 1.0 / fm_count
-            for pb_size_ratio in self.pb_size_ratios:
+            # 敷き詰めたときの中央の位置のリスト
+            lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, fm_count, dtype=np.float32)
+            # 縦横に敷き詰め
+            centers_x, centers_y = np.meshgrid(lin, lin)
+            centers_x = centers_x.reshape(-1, 1)
+            centers_y = centers_y.reshape(-1, 1)
+            prior_boxes_base = np.concatenate((centers_x, centers_y), axis=1)
+            # (x, y) → タイル×(x1, y1, x2, y2)
+            prior_boxes_base = np.tile(prior_boxes_base, (1, 2))
+            assert prior_boxes_base.shape == (fm_count ** 2, 4)
+
+            for pb_pat in self.pb_size_patterns:
                 # prior boxのサイズの基準
-                pb_size = tile_size * pb_size_ratio
-                for aspect_ratio in self.aspect_ratios:
-                    # 敷き詰めたときの中央の位置のリスト
-                    lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, fm_count, dtype=np.float32)
-                    # 縦横に敷き詰め
-                    centers_x, centers_y = np.meshgrid(lin, lin)
-                    centers_x = centers_x.reshape(-1, 1)
-                    centers_y = centers_y.reshape(-1, 1)
-                    prior_boxes = np.concatenate((centers_x, centers_y), axis=1)
-                    # (x, y) → タイル×(x1, y1, x2, y2)
-                    prior_boxes = np.tile(prior_boxes, (1, 2))
-                    assert prior_boxes.shape == (fm_count ** 2, 4)
+                pb_size = tile_size * pb_pat
+                # prior boxのサイズ
+                # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
+                prior_boxes = np.copy(prior_boxes_base)
+                prior_boxes[:, 0] -= pb_size[0] / 2
+                prior_boxes[:, 1] -= pb_size[1] / 2
+                prior_boxes[:, 2] += pb_size[0] / 2
+                prior_boxes[:, 3] += pb_size[1] / 2
+                # はみ出ているのはclipしておく
+                prior_boxes = np.clip(prior_boxes, 0, 1)
 
-                    # prior boxのサイズ
-                    # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
-                    pb_w = pb_size * np.sqrt(aspect_ratio)
-                    pb_h = pb_size / np.sqrt(aspect_ratio)
-                    prior_boxes[:, 0] -= pb_w / 2
-                    prior_boxes[:, 1] -= pb_h / 2
-                    prior_boxes[:, 2] += pb_w / 2
-                    prior_boxes[:, 3] += pb_h / 2
-                    # はみ出ているのはclipしておく
-                    prior_boxes = np.clip(prior_boxes, 0, 1)
-
-                    self.pb_locs.extend(prior_boxes)
-                    self.pb_scales.extend([[pb_w, pb_h] * 2] * len(prior_boxes))
-                    self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
-                    self.pb_info.append({
-                        'fm_count': fm_count,
-                        'size': pb_size,
-                        'aspect_ratio': aspect_ratio,
-                        'count': len(prior_boxes),
-                    })
+                self.pb_locs.extend(prior_boxes)
+                self.pb_scales.extend([[pb_size[0], pb_size[1]] * 2] * len(prior_boxes))
+                self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
+                self.pb_info.append({
+                    'fm_count': fm_count,
+                    'size': np.sqrt(pb_size.prod()),
+                    'aspect_ratio': pb_size[0] / pb_size[1],
+                    'count': len(prior_boxes),
+                })
 
         self.pb_locs = np.array(self.pb_locs)
         self.pb_info_indices = np.array(self.pb_info_indices)

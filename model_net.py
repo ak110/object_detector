@@ -157,25 +157,24 @@ def _create_pm(od, ref):
 
     # スケール間で重みを共有するレイヤーの作成
     shared_layers = {}
-    for size_ix in range(len(od.pb_size_ratios)):
-        for ar_ix in range(len(od.aspect_ratios)):
-            prefix = 'pm-{}-{}'.format(size_ix, ar_ix)
-            shared_layers[(size_ix, ar_ix)] = {
-                'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv0'),
-                'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv1'),
-                'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv2'),
-                'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv3'),
-                'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
-                                            kernel_regularizer=l2(1e-4),
-                                            bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
-                                            bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
-                                            activation='softmax',
-                                            name=prefix + '_conf'),
-                'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
-                                           kernel_regularizer=l2(1e-4),
-                                           bias_regularizer=l2(1e-4),
-                                           name=prefix + '_loc'),
-            }
+    for pat_ix in range(len(od.pb_size_patterns)):
+        prefix = 'pm-{}'.format(pat_ix)
+        shared_layers[pat_ix] = {
+            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv0'),
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv2'),
+            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv3'),
+            'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
+                                        kernel_regularizer=l2(1e-4),
+                                        bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
+                                        bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
+                                        activation='softmax',
+                                        name=prefix + '_conf'),
+            'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+                                       kernel_regularizer=l2(1e-4),
+                                       bias_regularizer=l2(1e-4),
+                                       name=prefix + '_loc'),
+        }
 
     def _pm(x, prefix, sl):
         # 非共有でsqueeze
@@ -197,12 +196,11 @@ def _create_pm(od, ref):
     confs, locs = [], []
     for fm_count in ObjectDetector.FM_COUNTS:
         x = ref['up{}'.format(fm_count)]
-        for size_ix in range(len(od.pb_size_ratios)):
-            for ar_ix in range(len(od.aspect_ratios)):
-                prefix = 'pm{}-{}-{}'.format(fm_count, size_ix, ar_ix)
-                conf, loc = _pm(x, prefix, shared_layers[(size_ix, ar_ix)])
-                confs.append(conf)
-                locs.append(loc)
+        for pat_ix in range(len(od.pb_size_patterns)):
+            prefix = 'pm{}-{}'.format(fm_count, pat_ix)
+            conf, loc = _pm(x, prefix, shared_layers[pat_ix])
+            confs.append(conf)
+            locs.append(loc)
     confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
     locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
     return confs, locs
