@@ -3,6 +3,7 @@ import numpy as np
 
 import pytoolkit as tk
 from model import ObjectDetector
+from model_net import get_preprocess_input
 
 
 class Generator(tk.image.ImageDataGenerator):
@@ -10,7 +11,7 @@ class Generator(tk.image.ImageDataGenerator):
 
     def __init__(self, image_size, od: ObjectDetector):
         self.od = od
-        super().__init__(image_size)
+        super().__init__(image_size, preprocess_input=get_preprocess_input())
         self.add(0.125, tk.image.RandomBlur())
         self.add(0.125, tk.image.RandomBlur(partial=True))
         self.add(0.125, tk.image.RandomUnsharpMask())
