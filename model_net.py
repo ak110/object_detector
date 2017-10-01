@@ -95,7 +95,7 @@ def _create_basenet(x, freeze):
         ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
         ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
         x = ref['down{}'.format(10)]
-        x = tk.dl.conv2d(512, (1, 1), activation='relu', name='pre_squeeze')(x)
+        x = tk.dl.conv2d(256, (1, 1), activation='relu', name='pre_squeeze')(x)
         for fm_count in (5,):
             x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
             x = _downblock(x, 'down{}_block'.format(fm_count))
@@ -109,7 +109,7 @@ def _create_basenet(x, freeze):
         ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
         ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
         x = ref['down{}'.format(10)]
-        x = tk.dl.conv2d(512, (1, 1), activation='relu', name='pre_squeeze')(x)
+        x = tk.dl.conv2d(256, (1, 1), activation='relu', name='pre_squeeze')(x)
         for fm_count in (5,):
             x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
             x = _downblock(x, 'down{}_block'.format(fm_count))
@@ -139,14 +139,6 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
         x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_concat')([x, b])
     if compress:
         x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='relu', name=name + '_sq')(x)
-    return x
-
-
-def _branch(x, filters, name):
-    import keras
-    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c1')(x)
-    x = keras.layers.Dropout(0.25, name=name + '_drop')(x)
-    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
     return x
 
 
