@@ -26,24 +26,10 @@ def _loss_conf(gt_confs, pred_confs, obj_count):
     """分類のloss。"""
     import keras.backend as K
     if True:
-        # Focal lossの論文では0.25が良いとしているが、他のパラメータとのバランスに依ると思う。
-        #
-        # SSDではbg : obj = 3 : 1になるようにminingして学習している。
-        # bg : obj = (priorbox - assigned) * (1 - alpha) : assigned * alpha
-        # なので、
-        # alpha = (priorbox - assigned) / (priorbox + assigned * (3 - 1))
-        # となる。
-        # priorbox = 46035
-        # assigned = 60
-        # とすると、
-        # alpha = (46035 - 60) / (46035 + 60 * (3 - 1)) = 0.996
-        #
-        # ただし、miningはlossの大きいもの優先なので必ずしもこの通りではない。
-        # 仮に3→9とすると0.988。100で0.9、200で0.8。
-        loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs, alpha=0.99)
+        loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs)
         loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
     else:
-        loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.99)
+        loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs)
         loss = K.maximum(loss - 0.01, 0)  # clip
         loss = K.mean(loss, axis=-1)
     return loss
