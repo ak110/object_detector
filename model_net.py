@@ -10,12 +10,11 @@ def create_pretrain_network(input_shape, nb_classes):
     """モデルの作成。"""
     import keras
 
-    # ベースネットワーク
+    # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(input_shape)
-    x, _ = _create_basenet(x)
-
+    x, _ = _create_basenet(x, freeze=False)
     # center
-    x = _downblock(x, 'center_block')
+    x = _centerblock(x)
 
     # prediction
     x = keras.layers.GlobalAveragePooling2D(name='pool')(x)
@@ -29,19 +28,14 @@ def create_network(od, freeze):
     import keras
     from model import ObjectDetector
 
-    # ベースネットワーク
+    # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(od.input_size + (3,))
     x, ref = _create_basenet(x, freeze)
-
     # center
-    x = _downblock(x, 'center_block')
-
+    x = _centerblock(x)
     # upsampling
     for fm_count in ObjectDetector.FM_COUNTS[::-1]:
-        if fm_count != ObjectDetector.FM_COUNTS[-1]:
-            x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
-        x = _upblock(x, ref['down{}'.format(fm_count)], 'up{}_block'.format(fm_count))
-        ref['up{}'.format(fm_count)] = x
+        x = _upblock(x, ref, fm_count)
 
     # prediction module
     confs, locs = _create_pm(od, ref)
@@ -80,13 +74,11 @@ def _create_basenet(x, freeze):
     if _BASENET_TYPE == 'custom':
         x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='relu', name='stage1_conv1')(x)  # 160x160
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='relu', name='stage1_conv2')(x)
-        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80。DenseNetを参考に最初だけMax。
+        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         for fm_count in ObjectDetector.FM_COUNTS:
-            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-            x = _downblock(x, 'down{}_block'.format(fm_count))
-            ref['down{}'.format(fm_count)] = x
-    elif _BASENET_TYPE in 'resnet50':
+            x = _downblock(x, ref, fm_count)
+    elif _BASENET_TYPE == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         if freeze:
             for layer in basenet.layers:
@@ -95,12 +87,9 @@ def _create_basenet(x, freeze):
         ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
         ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
         x = ref['down{}'.format(10)]
-        x = tk.dl.conv2d(256, (1, 1), activation='relu', name='pre_squeeze')(x)
         for fm_count in (5,):
-            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-            x = _downblock(x, 'down{}_block'.format(fm_count))
-            ref['down{}'.format(fm_count)] = x
-    elif _BASENET_TYPE in 'xception':
+            x = _downblock(x, ref, fm_count)
+    elif _BASENET_TYPE == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
         if freeze:
             for layer in basenet.layers:
@@ -109,11 +98,8 @@ def _create_basenet(x, freeze):
         ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
         ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
         x = ref['down{}'.format(10)]
-        x = tk.dl.conv2d(256, (1, 1), activation='relu', name='pre_squeeze')(x)
         for fm_count in (5,):
-            x = keras.layers.AveragePooling2D(name='down{}_ds'.format(fm_count))(x)
-            x = _downblock(x, 'down{}_block'.format(fm_count))
-            ref['down{}'.format(fm_count)] = x
+            x = _downblock(x, ref, fm_count)
     else:
         assert False
 
@@ -128,6 +114,7 @@ def _create_basenet(x, freeze):
 def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
     import keras
     import keras.backend as K
+
     for branch in range(branches):
         if bottleneck:
             b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='relu', name=name + '_b' + str(branch) + '_c1')(x)
@@ -136,29 +123,56 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
         else:
             b = keras.layers.Dropout(0.25)(x)
             b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='relu', name=name + '_b' + str(branch))(b)
-        x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_concat')([x, b])
+        x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_cat')([x, b])
+
     if compress:
         x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='relu', name=name + '_sq')(x)
+
     return x
 
 
-def _downblock(x, name):
-    x = _denseblock(x, 64, 8, bottleneck=True, compress=True, name=name)
-    return x
-
-
-def _upblock(x, b, name):
+def _downblock(x, ref, fm_count):
     import keras
     import keras.backend as K
-    if K.int_shape(x)[-1] != 256:
-        x = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, use_bn=False, use_bias=False, name=name + '_sqx')(x)
-    if K.int_shape(b)[-1] != 256:
-        b = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, use_bn=False, use_bias=False, name=name + '_sqb')(b)
-    x = keras.layers.Add(name=name + '_add')([x, b])
-    x = keras.layers.BatchNormalization(name=name + '_bn')(x)
-    x = keras.layers.Activation('relu', name=name + '_act')(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c1')(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name=name + '_c2')(x)
+
+    if K.int_shape(x)[-1] > 256:
+        x = tk.dl.conv2d(256, (1, 1), activation='relu', name='down{}_sq'.format(fm_count))(x)
+    assert K.int_shape(x)[-1] == 256
+
+    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(fm_count))(x)
+    assert K.int_shape(x)[1] == fm_count
+
+    x = _denseblock(x, 64, 8, bottleneck=True, compress=True, name='down{}_block'.format(fm_count))
+
+    ref['down{}'.format(fm_count)] = x
+    return x
+
+
+def _centerblock(x):
+
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='center_conv1')(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='center_conv2')(x)
+
+    return x
+
+
+def _upblock(x, ref, fm_count):
+    import keras
+    import keras.backend as K
+
+    t = ref['down{}'.format(fm_count)]
+
+    if K.int_shape(x)[1] != fm_count:
+        x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
+    assert K.int_shape(x)[1] == fm_count
+
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, name='up{}_c1'.format(fm_count))(x)
+    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_lq'.format(fm_count))(t)
+    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t])
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='up{}_c2'.format(fm_count))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='up{}_c3'.format(fm_count))(x)
+
+    ref['up{}'.format(fm_count)] = x
     return x
 
 
@@ -173,10 +187,11 @@ def _create_pm(od, ref):
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv0'),
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv2'),
-            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_conv3'),
+            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', use_bias=False, name=prefix + '_sq'),
+            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c0'),
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c2'),
+            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c3'),
             'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
@@ -185,23 +200,24 @@ def _create_pm(od, ref):
                                         name=prefix + '_conf'),
             'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
                                        kernel_regularizer=l2(1e-4),
-                                       bias_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
         }
 
-    def _pm(x, prefix, sl):
-        # 非共有でsqueeze
-        x = tk.dl.conv2d(64, (1, 1), activation='relu', name=prefix + '_sq')(x)
+    def _pm(x, prefix, shlayers):
+        # squeeze
+        x = shlayers['sq'](x)
+        x = keras.layers.BatchNormalization(name='{}_sq_bn'.format(prefix))(x)
+        x = keras.layers.Activation('relu', name='{}_sq_act'.format(prefix))(x)
         # DenseBlock (BNだけ非共有)
         for branch in range(4):
-            b = keras.layers.Dropout(0.25, name='{}_conv{}_drop'.format(prefix, branch))(x)
-            b = sl['c' + str(branch)](b)
-            b = keras.layers.BatchNormalization(name='{}_conv{}_bn'.format(prefix, branch))(b)
-            b = keras.layers.Activation('relu', name='{}_conv{}_act'.format(prefix, branch))(b)
-            x = keras.layers.Concatenate(name='{}_conv{}_concat'.format(prefix, branch))([x, b])
+            b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
+            b = shlayers['c' + str(branch)](b)
+            b = keras.layers.BatchNormalization(name='{}_c{}_bn'.format(prefix, branch))(b)
+            b = keras.layers.Activation('relu', name='{}_c{}_act'.format(prefix, branch))(b)
+            x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
         # conf/loc
-        conf = sl['conf'](x)
-        loc = sl['loc'](x)
+        conf = shlayers['conf'](x)
+        loc = shlayers['loc'](x)
         conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
         loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
         return conf, loc

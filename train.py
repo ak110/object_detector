@@ -20,11 +20,11 @@ from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 8
-_MAX_EPOCH = 300
-_MAX_EPOCH_FREEZE = 64
-_MAX_EPOCH_DEBUG = 16
-_BASE_LR = 1e-3
+_EPOCH_LIST_DEBUG = [8, 4, 4]
+_EPOCH_LIST_FREEZE = [32, 16]
+_EPOCH_LIST = [64, 32, 16]
 _BASE_LR_FREEZE = 1e-1
+_BASE_LR = 1e-3
 
 
 def _main():
@@ -102,32 +102,50 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             batch_size = _BATCH_SIZE * gpu_count
             keras.utils.plot_model(model, str(result_dir.joinpath('model.multigpu.png')), show_shapes=True)
 
-        # model.compile('nadam', od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
         model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
 
         gen = Generator(image_size=od.input_size, od=od)
 
-        if args.freeze:
-            max_epoch = _MAX_EPOCH_FREEZE
-            lr_list = [_BASE_LR_FREEZE] * (max_epoch // 2) + [_BASE_LR_FREEZE / 10] * (max_epoch // 4) + [_BASE_LR_FREEZE / 100] * (max_epoch // 4)
-        else:
-            max_epoch = _MAX_EPOCH_DEBUG if args.debug else _MAX_EPOCH
-            lr_list = [_BASE_LR] * (max_epoch // 2) + [_BASE_LR / 10] * (max_epoch // 4) + [_BASE_LR / 100] * (max_epoch // 4)
-
         callbacks = []
-        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
-        # callbacks.append(tk.dl.my_callback_factory()(result_dir, base_lr=_BASE_LR, beta1=0.9990, beta2=0.9995, margin_iterations=518))
+        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=[0.1]))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
         callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
-        # callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'acc'))
-        # if K.backend() == 'tensorflow':
-        #     callbacks.append(keras.callbacks.TensorBoard())
 
         # 各epoch毎にmAPを算出して表示してみる
         callbacks.append(keras.callbacks.LambdaCallback(
             on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, epoch, result_dir)
         ))
 
+        if args.freeze:
+            epoch_list = _EPOCH_LIST_FREEZE
+            max_epoch = sum(epoch_list)
+            callbacks[0].lr_list = (
+                [_BASE_LR_FREEZE / 1] * epoch_list[0] +
+                [_BASE_LR_FREEZE / 10] * epoch_list[1])
+            model.fit_generator(
+                gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
+                steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
+                epochs=max_epoch,
+                validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
+                validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
+                callbacks=callbacks)
+            callbacks[0].append = True
+            model.save(str(result_dir.joinpath('model.freezed.h5')))
+
+            for layer in model.layers:
+                layer.trainable = True
+                if hasattr(layer, 'layers'):  # multigpu対策(仮)
+                    for l in layer.layers:
+                        l.trainable = True
+            model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
+            logger.debug('Trainable params: %d', tk.dl.count_trainable_params(model))
+
+        epoch_list = _EPOCH_LIST_DEBUG if args.debug else _EPOCH_LIST
+        max_epoch = sum(epoch_list)
+        callbacks[0].lr_list = (
+            [_BASE_LR / 1] * epoch_list[0] +
+            [_BASE_LR / 10] * epoch_list[1] +
+            [_BASE_LR / 100] * epoch_list[2])
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
             steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
@@ -135,7 +153,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
-
         model.save(str(result_dir.joinpath('model.h5')))
 
         # 最終結果表示
