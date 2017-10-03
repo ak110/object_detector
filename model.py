@@ -217,25 +217,22 @@ class ObjectDetector(object):
             # prior_boxesとbboxesで重なっているものを探す
             iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
 
-            pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # 割り当てようとしているgt_ix
+            # 割り当てようとしているgt_ix
+            pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
 
-            # 大きいものから順に割り当てる (小さいものが出来るだけうまく割り当たって欲しいので)
-            gt_ix_list = np.argsort(-np.prod(y.bboxes[:, 2:] - y.bboxes[:, : 2], axis=-1))
-            for gt_ix in gt_ix_list:
-                if not _TRAIN_DIFFICULT and y.difficult[gt_ix]:
-                    continue
-                pb_ixs = np.where(iou[:, gt_ix] >= 0.5)[0]
-                if pb_ixs.any():
-                    # IOUが0.5以上のものがあるなら全部割り当てる
-                    pb_candidates[pb_ixs] = gt_ix
-                else:
-                    # 0.5以上のものが無ければIOUが一番大きいものに割り当てる
-                    pb_ixs = iou[:, gt_ix].argmax()
-                    if pb_candidates[pb_ixs] >= 0:  # 割り当て済みな場合
-                        if iou[pb_ixs, pb_candidates[pb_ixs]] < 0.5:
-                            if False:  # ↓何故か毎回出てしまうためとりあえず無効化
-                                warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
-                    pb_candidates[pb_ixs] = gt_ix
+            # IOUが0.5以上のものはまとめて割り当てる。1つのpboxに複数当たる場合はIOUが大きい方優先
+            mask = iou.max(axis=1) >= 0.5
+            pb_candidates[mask] = iou[mask, :].argmax(axis=1)
+
+            # 0.5以上のものが無いgt_ixはIOUが一番大きいものに割り当てる
+            failed_ix_list = np.where(iou.max(axis=0) < 0.5)[0]
+            for gt_ix in failed_ix_list:
+                pb_ix = iou[:, gt_ix].argmax()
+                if False:  # ↓何故か毎回出てしまうためとりあえず無効化
+                    if pb_candidates[pb_ix] >= 0:  # 割り当て済みな場合
+                        if iou[pb_ix, pb_candidates[pb_ix]] < 0.5:
+                            warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
+                pb_candidates[pb_ix] = gt_ix
 
             pb_ixs = np.where(pb_candidates >= 0)[0]
             assert len(pb_ixs) >= 1
@@ -248,14 +245,6 @@ class ObjectDetector(object):
                 confs[i, pb_ix, class_id] = 1
                 # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
                 locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
-
-        # # 1画像あたり1個以上割り当たっていることの確認 (ゼロ除算が怖い)
-        # obj_mask = (confs[:, :, 0] < 0.5).astype(float)
-        # obj_count = np.sum(obj_mask, axis=-1)
-        # assert (obj_count >= 1).all()
-
-        # # 分類の教師が合計≒1になっていることの確認
-        # assert (np.abs(confs.sum(axis=-1) - 1) < 1e-7).all()
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
