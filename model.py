@@ -143,14 +143,17 @@ class ObjectDetector(object):
         """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
-        match_counts = [0] * len(self.pb_info)
-        rec_delta_locs = []
-        unrec_widths = []
-        unrec_heights = []
-        unrec_ars = []
+        match_counts = [0] * len(self.pb_info)  # iou >= 0.5のprior boxが1つ以上存在した回数
+        unrec_widths = []  # iou < 0.5の横幅
+        unrec_heights = []  # iou < 0.5の高さ
+        unrec_ars = []  # iou < 0.5のアスペクト比
+        rec_counts = []  # iou >= 0.5のprior box数
+        rec_delta_locs = []  # Δlocs
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
+            # prior_boxesとbboxesで重なっているものを探す
             iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
-            # クラスごとに再現率を求める
+
+            # クラスごとに再現率などを算出
             for gt_ix, class_id in enumerate(y.classes):
                 assert 1 <= class_id < self.nb_classes
                 m = iou[:, gt_ix] >= 0.5
@@ -158,10 +161,12 @@ class ObjectDetector(object):
                 y_true.append(class_id)
                 y_pred.append(class_id if success else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
                 if success:
+                    rec_counts.append(np.count_nonzero(m))
                     pb_ix = iou[:, gt_ix].argmax()
                     delta_locs = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
                     match_counts[self.pb_info_indices[pb_ix]] += 1
                     rec_delta_locs.append(delta_locs)
+
             # 再現(iou >= 0.5)しなかったboxの情報を集める
             for bbox in y.bboxes[iou.max(axis=0) < 0.5]:
                 w = bbox[2] - bbox[0]
@@ -169,29 +174,33 @@ class ObjectDetector(object):
                 unrec_widths.append(w)
                 unrec_heights.append(h)
                 unrec_ars.append(w / h)
-        # 再現率などの表示
+
+        # 集計
         y_true.append(0)  # 警告よけにbgも1個入れておく
         y_pred.append(0)  # 警告よけにbgも1個入れておく
         total_gt_boxes = sum([len(y.bboxes) for y in y_test])
         cr = sklearn.metrics.classification_report(y_true, y_pred, target_names=class_names)
-        logger.debug('prior boxs = %d', len(self.pb_locs))
+
+        # ログ出力
         logger.debug(cr)
-        logger.debug('match counts:')
+        logger.debug('[iou >= 0.5] counts:')
         for i, c in enumerate(match_counts):
             logger.debug('  prior boxes{fm=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
                          self.pb_info[i]['fm_count'],
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
-        # delta locの分布調査
+        # Δlocの分布調査
+        # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
         logger.debug('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
                      delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
+        # iou < 0.5の出現率
+        logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
+                     len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
+
         # ヒストグラム色々を出力
         import matplotlib.pyplot as plt
-        plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
-        plt.close()
         plt.hist(unrec_widths, bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('unrec_widths.hist.png')))
         plt.close()
@@ -201,6 +210,12 @@ class ObjectDetector(object):
         plt.xscale('log')
         plt.hist(unrec_ars, bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('unrec_ars.hist.png')))
+        plt.close()
+        plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
+        plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
+        plt.close()
+        plt.hist(rec_counts, bins=32)
+        plt.gcf().savefig(str(result_dir.joinpath('rec_counts.hist.png')))
         plt.close()
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
