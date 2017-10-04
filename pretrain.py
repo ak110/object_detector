@@ -23,7 +23,6 @@ def _main():
     script_path = pathlib.Path(__file__).resolve()
     base_dir = script_path.parent
     os.chdir(str(base_dir))
-    np.random.seed(1337)  # for reproducibility
 
     result_dir = base_dir.joinpath('results_pretrain')
     result_dir.mkdir(parents=True, exist_ok=True)

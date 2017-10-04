@@ -24,7 +24,6 @@ def _main():
     script_path = pathlib.Path(__file__).resolve()
     base_dir = script_path.parent
     os.chdir(str(base_dir))
-    np.random.seed(1337)  # for reproducibility
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
