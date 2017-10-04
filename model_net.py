@@ -33,6 +33,8 @@ def create_network(od, freeze):
     x, ref = _create_basenet(x, freeze)
     # center
     x = _centerblock(x)
+    # auxnet
+    _create_auxnet(inputs, ref)
     # upsampling
     for fm_count in ObjectDetector.FM_COUNTS[::-1]:
         x = _upblock(x, ref, fm_count)
@@ -111,6 +113,26 @@ def _create_basenet(x, freeze):
     return x, ref
 
 
+def _create_auxnet(x, ref):
+    """補助的なネットワークの作成。"""
+    import keras
+    import keras.backend as K
+    from model import ObjectDetector
+
+    if _BASENET_TYPE == 'resnet50':
+        x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
+        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='relu', name='aux_stage1_c')(x)
+        x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
+        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='relu', name='aux_stage2_c')(x)
+        for fm_count in ObjectDetector.FM_COUNTS:
+            x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
+            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='relu', name='aux{}_c'.format(fm_count))(x)
+            assert K.int_shape(x)[1] == fm_count
+            ref['aux{}'.format(fm_count)] = x
+    else:
+        assert False
+
+
 def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
     import keras
     import keras.backend as K
@@ -161,14 +183,16 @@ def _upblock(x, ref, fm_count):
     import keras.backend as K
 
     t = ref['down{}'.format(fm_count)]
+    a = ref['aux{}'.format(fm_count)]
 
     if K.int_shape(x)[1] != fm_count:
         x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
     assert K.int_shape(x)[1] == fm_count
 
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, name='up{}_c1'.format(fm_count))(x)
-    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_lq'.format(fm_count))(t)
-    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t])
+    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_lt'.format(fm_count))(t)
+    a = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_ax'.format(fm_count))(a)
+    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t, a])
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='up{}_c2'.format(fm_count))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='relu', name='up{}_c3'.format(fm_count))(x)
 
