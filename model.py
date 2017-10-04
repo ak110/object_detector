@@ -147,16 +147,18 @@ class ObjectDetector(object):
         unrec_widths = []  # iou < 0.5の横幅
         unrec_heights = []  # iou < 0.5の高さ
         unrec_ars = []  # iou < 0.5のアスペクト比
-        rec_counts = []  # iou >= 0.5のprior box数
+        rec_counts = []  # prior box毎の、iou >= 0.5の数
+        rec_col_counts = []  # iou >= 0.5で2個以上のラベルが割り当たってしまったprior box数
         rec_delta_locs = []  # Δlocs
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
             # prior_boxesとbboxesで重なっているものを探す
             iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
+            iou_mask = iou >= 0.5
 
             # クラスごとに再現率などを算出
             for gt_ix, class_id in enumerate(y.classes):
                 assert 1 <= class_id < self.nb_classes
-                m = iou[:, gt_ix] >= 0.5
+                m = iou_mask[:, gt_ix]
                 success = m.any()
                 y_true.append(class_id)
                 y_pred.append(class_id if success else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
@@ -166,6 +168,8 @@ class ObjectDetector(object):
                     delta_locs = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
                     match_counts[self.pb_info_indices[pb_ix]] += 1
                     rec_delta_locs.append(delta_locs)
+
+            rec_col_counts.append(np.count_nonzero(np.count_nonzero(iou_mask, axis=1) >= 2))
 
             # 再現(iou >= 0.5)しなかったboxの情報を集める
             for bbox in y.bboxes[iou.max(axis=0) < 0.5]:
@@ -198,6 +202,10 @@ class ObjectDetector(object):
         # iou < 0.5の出現率
         logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
                      len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
+        # iou >= 0.5での衝突の出現率
+        logger.debug('[iou >= 0.5] collision count: %d / %d (%.02f%%)',
+                     np.count_nonzero(rec_col_counts), len(y_test),
+                     100 * np.count_nonzero(rec_col_counts) / len(y_test))
 
         # ヒストグラム色々を出力
         import matplotlib.pyplot as plt
@@ -216,6 +224,9 @@ class ObjectDetector(object):
         plt.close()
         plt.hist(rec_counts, bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('rec_counts.hist.png')))
+        plt.close()
+        plt.hist(rec_col_counts, bins=32)
+        plt.gcf().savefig(str(result_dir.joinpath('rec_col_counts.hist.png')))
         plt.close()
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
@@ -364,4 +375,3 @@ class ObjectDetector(object):
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""
         return model_net.create_predict_network(self, model)
-
