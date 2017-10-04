@@ -23,7 +23,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     pred_confs_list = []
     pred_locs_list = []
     steps = gen.steps_per_epoch(len(X_test), batch_size)
-    with tqdm(total=steps, desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
+    with tqdm(total=len(X_test), unit='f', desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
             pred_classes, pred_confs, pred_locs = predict_model.predict(X_batch)
             pred_classes, pred_confs, pred_locs = od.select_predictions(
@@ -38,7 +38,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
                     tk.ml.plot_objects(
                         X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
                         pcl[mask], pcf[mask], pl[mask], CLASS_NAMES)
-            pbar.update()
+            pbar.update(len(X_batch))
             if i + 1 >= steps:
                 break
 
