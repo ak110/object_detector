@@ -17,14 +17,17 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     if epoch is not None:
         print('')
 
+    predict_model = od.create_predict_network(model)
+
     pred_classes_list = []
     pred_confs_list = []
     pred_locs_list = []
     steps = gen.steps_per_epoch(len(X_test), batch_size)
     with tqdm(total=steps, desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
-            pred = model.predict(X_batch)
-            pred_classes, pred_confs, pred_locs = od.decode_predictions(pred, parallel=parallel)
+            pred_classes, pred_confs, pred_locs = predict_model.predict(X_batch)
+            pred_classes, pred_confs, pred_locs = od.select_predictions(
+                pred_classes, pred_confs, pred_locs, parallel=parallel)
             pred_classes_list.extend(pred_classes)
             pred_confs_list.extend(pred_confs)
             pred_locs_list.extend(pred_locs)

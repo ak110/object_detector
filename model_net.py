@@ -257,3 +257,23 @@ def _create_pm(od, ref):
     confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
     locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
     return confs, locs
+
+
+def create_predict_network(od, model):
+    """予測用ネットワークの作成"""
+    import keras
+    import keras.backend as K
+
+    try:
+        confs = model.get_layer(name='output_confs').output
+        locs = model.get_layer(name='output_locs').output
+    except ValueError:
+        output = model.outputs[0]  # マルチGPU対策。。
+        confs = keras.layers.Lambda(lambda c: c[:, :, :-4], K.int_shape(output)[1:-1] + (od.nb_classes,))(output)
+        locs = keras.layers.Lambda(lambda c: c[:, :, -4:], K.int_shape(output)[1:-1] + (4,))(output)
+
+    objclasses = keras.layers.Lambda(lambda c: K.argmax(c[:, :, 1:], axis=-1) + 1, K.int_shape(confs)[1:-1])(confs)
+    objconfs = keras.layers.Lambda(lambda c: K.max(c[:, :, 1:], axis=-1), K.int_shape(confs)[1:-1])(confs)
+    locs = keras.layers.Lambda(lambda l: K.clip(l * od.pb_scales + od.pb_locs, 0, 1), K.int_shape(locs))(locs)
+
+    return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])
