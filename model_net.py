@@ -74,8 +74,8 @@ def _create_basenet(x, freeze):
 
     ref = {}
     if _BASENET_TYPE == 'custom':
-        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='elu', name='stage1_conv1')(x)  # 160x160
-        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', name='stage1_conv2')(x)
+        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='elu', kernel_initializer='he_uniform', name='stage1_conv1')(x)  # 160x160
+        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv2')(x)
         x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         for fm_count in ObjectDetector.FM_COUNTS:
@@ -121,12 +121,12 @@ def _create_auxnet(x, ref):
 
     if _BASENET_TYPE == 'resnet50':
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
-        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', name='aux_stage1_c')(x)
+        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage1_c')(x)
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
-        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', name='aux_stage2_c')(x)
+        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c')(x)
         for fm_count in ObjectDetector.FM_COUNTS:
             x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
-            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', name='aux{}_c'.format(fm_count))(x)
+            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux{}_c'.format(fm_count))(x)
             assert K.int_shape(x)[1] == fm_count
             ref['aux{}'.format(fm_count)] = x
     else:
@@ -139,16 +139,16 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
 
     for branch in range(branches):
         if bottleneck:
-            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu', name=name + '_b' + str(branch) + '_c1')(x)
+            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch) + '_c1')(x)
             b = keras.layers.Dropout(0.25)(b)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', name=name + '_b' + str(branch) + '_c2')(b)
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch) + '_c2')(b)
         else:
             b = keras.layers.Dropout(0.25)(x)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', name=name + '_b' + str(branch))(b)
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch))(b)
         x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_cat')([x, b])
 
     if compress:
-        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu', name=name + '_sq')(x)
+        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_sq')(x)
 
     return x
 
@@ -158,7 +158,7 @@ def _downblock(x, ref, fm_count):
     import keras.backend as K
 
     if K.int_shape(x)[-1] > 256:
-        x = tk.dl.conv2d(256, (1, 1), activation='elu', name='down{}_sq'.format(fm_count))(x)
+        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='down{}_sq'.format(fm_count))(x)
     assert K.int_shape(x)[-1] == 256
 
     x = keras.layers.MaxPooling2D(name='down{}_ds'.format(fm_count))(x)
@@ -172,8 +172,8 @@ def _downblock(x, ref, fm_count):
 
 def _centerblock(x):
 
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', name='center_conv1')(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', name='center_conv2')(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='center_c1')(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='center_c2')(x)
 
     return x
 
@@ -189,12 +189,12 @@ def _upblock(x, ref, fm_count):
         x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
     assert K.int_shape(x)[1] == fm_count
 
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, name='up{}_c1'.format(fm_count))(x)
-    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_lt'.format(fm_count))(t)
-    a = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, name='up{}_ax'.format(fm_count))(a)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(fm_count))(x)
+    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(fm_count))(t)
+    a = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_ax'.format(fm_count))(a)
     x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t, a])
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', name='up{}_c2'.format(fm_count))(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', name='up{}_c3'.format(fm_count))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(fm_count))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c3'.format(fm_count))(x)
 
     ref['up{}'.format(fm_count)] = x
     return x
@@ -211,11 +211,11 @@ def _create_pm(od, ref):
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', use_bias=False, name=prefix + '_sq'),
-            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c0'),
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c2'),
-            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, name=prefix + '_c3'),
+            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_sq'),
+            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c0'),
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c2'),
+            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c3'),
             'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
