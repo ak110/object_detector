@@ -123,7 +123,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
                 validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
                 callbacks=callbacks)
             callbacks[0].append = True
-            model.save(str(result_dir.joinpath('model.freezed.h5')))
+            model.save(str(result_dir.joinpath('model.freezed.h5')))  # やり直したりするとき用に保存しておく
 
             for layer in model.layers:
                 layer.trainable = True

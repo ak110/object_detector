@@ -34,7 +34,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
             if i == 0:
                 save_dir = result_dir.joinpath('___check')
                 for j, (pcl, pcf, pl) in enumerate(zip(pred_classes, pred_confs, pred_locs)):
-                    mask = pcf >= 0.6  # SSDの真似
+                    mask = pcf >= 0.5  # 表示はある程度絞る (mAP算出のためには片っ端からリストアップしているため)
                     tk.ml.plot_objects(
                         X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
                         pcl[mask], pcf[mask], pl[mask], CLASS_NAMES)
