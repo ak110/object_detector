@@ -120,13 +120,23 @@ def _create_auxnet(x, ref):
     from model import ObjectDetector
 
     if _BASENET_TYPE == 'resnet50':
+        shared_conv = keras.layers.Conv2D(64, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name='aux_conv')
+
+        def _shared_conv(x):
+            x = shared_conv(x)
+            x = keras.layers.BatchNormalization()(x)
+            x = keras.layers.Activation(activation='elu')(x)
+            return x
+
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage1_c')(x)
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
-        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c')(x)
+        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c1')(x)
+        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c2')(x)
+        x = _shared_conv(x)
         for fm_count in ObjectDetector.FM_COUNTS:
             x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
-            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux{}_c'.format(fm_count))(x)
+            x = _shared_conv(x)
             assert K.int_shape(x)[1] == fm_count
             ref['aux{}'.format(fm_count)] = x
     else:
