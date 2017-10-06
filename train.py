@@ -20,11 +20,9 @@ from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 8
-_EPOCH_LIST_DEBUG = [8, 4, 4]
-_EPOCH_LIST_FREEZE = [32, 16]
-_EPOCH_LIST = [64, 32, 16]
-_BASE_LR_FREEZE = 1e-1
-_BASE_LR = 1e-3
+_LR_LIST_DEBUG = [1e-2] * 8 + [1e-3] * 4 + [1e-4] * 4
+_LR_LIST_FREEZE = [1e-2] * 32 + [1e-3] * 16
+_LR_LIST = [1e-3] * 16 + [1e-4] * 8 + [1e-5] * 4
 
 
 def _main():
@@ -116,15 +114,11 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         ))
 
         if args.freeze:
-            epoch_list = _EPOCH_LIST_FREEZE
-            max_epoch = sum(epoch_list)
-            callbacks[0].lr_list = (
-                [_BASE_LR_FREEZE / 1] * epoch_list[0] +
-                [_BASE_LR_FREEZE / 10] * epoch_list[1])
+            callbacks[0].lr_list = _LR_LIST_FREEZE
             model.fit_generator(
                 gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
                 steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
-                epochs=max_epoch,
+                epochs=len(callbacks[0].lr_list),
                 validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
                 validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
                 callbacks=callbacks)
@@ -139,16 +133,11 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
             logger.debug('Trainable params: %d', tk.dl.count_trainable_params(model))
 
-        epoch_list = _EPOCH_LIST_DEBUG if args.debug else _EPOCH_LIST
-        max_epoch = sum(epoch_list)
-        callbacks[0].lr_list = (
-            [_BASE_LR / 1] * epoch_list[0] +
-            [_BASE_LR / 10] * epoch_list[1] +
-            [_BASE_LR / 100] * epoch_list[2])
+        callbacks[0].lr_list = _LR_LIST_DEBUG if args.debug else _LR_LIST
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
             steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
-            epochs=max_epoch,
+            epochs=len(callbacks[0].lr_list),
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
