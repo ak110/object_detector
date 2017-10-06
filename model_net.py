@@ -120,23 +120,17 @@ def _create_auxnet(x, ref):
     from model import ObjectDetector
 
     if _BASENET_TYPE == 'resnet50':
-        shared_conv = keras.layers.Conv2D(64, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name='aux_conv')
-
-        def _shared_conv(x):
-            x = shared_conv(x)
-            x = keras.layers.BatchNormalization()(x)
-            x = keras.layers.Activation(activation='elu')(x)
-            return x
+        shared_conv = keras.layers.Conv2D(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv')
 
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage1_c')(x)
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c1')(x)
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c2')(x)
-        x = _shared_conv(x)
+        x = shared_conv(x)
         for fm_count in ObjectDetector.FM_COUNTS:
             x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
-            x = _shared_conv(x)
+            x = shared_conv(x)
             assert K.int_shape(x)[1] == fm_count
             ref['aux{}'.format(fm_count)] = x
     else:
@@ -213,26 +207,28 @@ def _upblock(x, ref, fm_count):
 def _create_pm(od, ref):
     """Prediction module."""
     import keras
-    from keras.regularizers import l2
     from model import ObjectDetector
+    from keras.regularizers import l2
 
     # スケール間で重みを共有するレイヤーの作成
     shared_layers = {}
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_sq'),
-            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c0'),
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c2'),
-            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', use_bias=False, kernel_initializer='he_uniform', name=prefix + '_c3'),
+            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_sq'),
+            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c0'),
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c2'),
+            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c3'),
             'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
+                                        kernel_initializer='zeros',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                         bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                                         activation='softmax',
                                         name=prefix + '_conf'),
             'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+                                       kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
         }
@@ -240,14 +236,10 @@ def _create_pm(od, ref):
     def _pm(x, prefix, shlayers):
         # squeeze
         x = shlayers['sq'](x)
-        x = keras.layers.BatchNormalization(name='{}_sq_bn'.format(prefix))(x)
-        x = keras.layers.Activation('elu', name='{}_sq_act'.format(prefix))(x)
         # DenseBlock (BNだけ非共有)
         for branch in range(4):
             b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
             b = shlayers['c' + str(branch)](b)
-            b = keras.layers.BatchNormalization(name='{}_c{}_bn'.format(prefix, branch))(b)
-            b = keras.layers.Activation('elu', name='{}_c{}_act'.format(prefix, branch))(b)
             x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
         # conf/loc
         conf = shlayers['conf'](x)
