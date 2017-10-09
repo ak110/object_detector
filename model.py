@@ -7,7 +7,6 @@ import sklearn.cluster
 import sklearn.metrics
 from tqdm import tqdm
 
-import model_loss
 import model_net
 import pytoolkit as tk
 
@@ -343,25 +342,118 @@ class ObjectDetector(object):
         assert img_locs.shape == (len(sorted_indices), 4)
         return img_classes, img_confs, img_locs
 
-    @staticmethod
-    def loss(y_true, y_pred):
+    def loss(self, y_true, y_pred):
         """損失関数。"""
-        return model_loss.multibox_loss(y_true, y_pred)
+        import keras.backend as K
+        import tensorflow as tf
+        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        pred_confs, pred_locs, pred_iou = y_pred[:, :, :-5], y_pred[:, :, -5:-1], y_pred[:, :, -1]
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+        obj_count = K.sum(obj_mask, axis=-1)  # 各batch毎のobj数。
+        # obj_countが1以上であることの確認
+        with tf.control_dependencies([tf.assert_positive(obj_count)]):
+            obj_count = tf.identity(obj_count)
+        loss_conf = self._loss_conf(gt_confs, pred_confs, obj_count)
+        loss_loc = self._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
+        loss_iou = self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
+        return loss_conf + loss_loc + loss_iou
+
+    @property
+    def metrics(self):
+        """各種metricをまとめて返す。"""
+        return [self.loss_conf, self.loss_loc, self.loss_iou, self.acc_bg, self.acc_obj]
+
+    @staticmethod
+    def loss_conf(y_true, y_pred):
+        """クラス分類の損失項。(metrics用)"""
+        import keras.backend as K
+        gt_confs = y_true[:, :, :-4]
+        pred_confs = y_pred[:, :, :-5]
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+        obj_count = K.sum(obj_mask, axis=-1)
+        return ObjectDetector._loss_conf(gt_confs, pred_confs, obj_count)
 
     @staticmethod
     def loss_loc(y_true, y_pred):
-        """位置の損失関数。"""
-        return model_loss.multibox_loss_loc(y_true, y_pred)
+        """位置の損失項。(metrics用)"""
+        import keras.backend as K
+        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        pred_locs = y_pred[:, :, -5:-1]
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+        obj_count = K.sum(obj_mask, axis=-1)
+        return ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
+
+    def loss_iou(self, y_true, y_pred):
+        """IOUの損失項。(metrics用)"""
+        import keras.backend as K
+        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+        obj_count = K.sum(obj_mask, axis=-1)
+        return self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
+
+    @staticmethod
+    def _loss_conf(gt_confs, pred_confs, obj_count):
+        """分類のloss。"""
+        import keras.backend as K
+        if True:
+            loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs)
+            loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
+        else:
+            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs)
+            loss = K.maximum(loss - 0.01, 0)  # clip
+            loss = K.mean(loss, axis=-1)
+        return loss
+
+    @staticmethod
+    def _loss_loc(gt_locs, pred_locs, obj_mask, obj_count):
+        """位置のloss。"""
+        import keras.backend as K
+        loss = tk.dl.l1_smooth_loss(gt_locs, pred_locs)
+        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
+        return loss
+
+    def _loss_iou(self, gt_locs, pred_locs, pred_iou, obj_mask, obj_count):
+        """IOUのloss。
+
+        gt_locsとpred_locsからIOUを算出し、それとpred_iouのbinary crossentropyを返す。
+        """
+        import keras.backend as K
+        bboxes_a = K.clip(gt_locs * self.pb_scales + self.pb_locs, 0, 1)
+        bboxes_b = K.clip(pred_locs * self.pb_scales + self.pb_locs, 0, 1)
+        lt = K.maximum(bboxes_a[:, :, :2], bboxes_b[:, :, :2])
+        rb = K.minimum(bboxes_a[:, :, 2:], bboxes_b[:, :, 2:])
+        area_inter = K.prod(rb - lt, axis=-1) * K.cast(K.all(K.less(lt, rb), axis=-1), K.floatx())
+        area_a = K.maximum(K.prod(bboxes_a[:, :, 2:] - bboxes_a[:, :, :2], axis=-1), 0)
+        area_b = K.maximum(K.prod(bboxes_b[:, :, 2:] - bboxes_b[:, :, :2], axis=-1), 0)
+        area_union = area_a + area_b - area_inter
+        iou = area_inter / area_union
+        # IOUのcrossentropy
+        loss = K.binary_crossentropy(iou, pred_iou)
+        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
+        return loss
 
     @staticmethod
     def acc_bg(y_true, y_pred):
         """背景の再現率。"""
-        return model_loss.multibox_acc_bg(y_true, y_pred)
+        import keras.backend as K
+        gt_confs = y_true[:, :, :-4]
+        pred_confs = y_pred[:, :, :-5]
+        bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
+        bg_count = K.sum(bg_mask, axis=-1)
+        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
+        return K.sum(acc * bg_mask, axis=-1) / bg_count
 
     @staticmethod
     def acc_obj(y_true, y_pred):
         """物体の再現率。"""
-        return model_loss.multibox_acc_obj(y_true, y_pred)
+        import keras.backend as K
+        gt_confs = y_true[:, :, :-4]
+        pred_confs = y_pred[:, :, :-5]
+        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+        obj_count = K.sum(obj_mask, axis=-1)
+        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
+        return K.sum(acc * obj_mask, axis=-1) / obj_count
 
     def create_network(self, freeze=False):
         """ネットワークの作成"""

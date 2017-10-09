@@ -40,10 +40,7 @@ def create_network(od, freeze):
         x = _upblock(x, ref, fm_count)
 
     # prediction module
-    confs, locs = _create_pm(od, ref)
-
-    # いったんくっつける (損失関数の中で分割して使う)
-    outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs])
+    outputs = _create_pm(od, ref)
 
     return keras.models.Model(inputs=inputs, outputs=outputs)
 
@@ -212,7 +209,7 @@ def _create_pm(od, ref):
     from keras.regularizers import l2
     from model import ObjectDetector
 
-    # スケール間で重みを共有するレイヤーの作成
+    # スケール間で重みを共有するレイヤー
     shared_layers = {}
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
@@ -229,10 +226,15 @@ def _create_pm(od, ref):
                                         bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                                         activation='softmax',
                                         name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (1, 1), use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+            'loc': keras.layers.Conv2D(4, (1, 1), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
                                        kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
+            'iou': keras.layers.Conv2D(1, (3, 3), padding='same',
+                                       kernel_initializer='zeros',
+                                       kernel_regularizer=l2(1e-4),
+                                       activation='sigmoid',
+                                       name=prefix + '_iou'),
         }
 
     def _pm(x, prefix, shlayers):
@@ -243,24 +245,33 @@ def _create_pm(od, ref):
             b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
             b = shlayers['c' + str(branch)](b)
             x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
-        # conf/loc
+        # conf/loc/iou
         conf = shlayers['conf'](x)
         loc = shlayers['loc'](x)
+        iou = shlayers['iou'](keras.layers.Concatenate()([x, loc]))
+        # reshape
         conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
         loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
-        return conf, loc
+        iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
+        return conf, loc, iou
 
-    confs, locs = [], []
+    confs, locs, ious = [], [], []
     for fm_count in ObjectDetector.FM_COUNTS:
         x = ref['up{}'.format(fm_count)]
         for pat_ix in range(len(od.pb_size_patterns)):
             prefix = 'pm{}-{}'.format(fm_count, pat_ix)
-            conf, loc = _pm(x, prefix, shared_layers[pat_ix])
+            conf, loc, iou = _pm(x, prefix, shared_layers[pat_ix])
             confs.append(conf)
             locs.append(loc)
+            ious.append(iou)
     confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
     locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
-    return confs, locs
+    ious = keras.layers.Concatenate(axis=-2, name='output_ious')(ious)
+
+    # いったんくっつける (損失関数の中で分割して使う)
+    outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
+
+    return outputs
 
 
 def create_predict_network(od, model):
@@ -271,13 +282,15 @@ def create_predict_network(od, model):
     try:
         confs = model.get_layer(name='output_confs').output
         locs = model.get_layer(name='output_locs').output
+        ious = model.get_layer(name='output_ious').output
     except ValueError:
         output = model.outputs[0]  # マルチGPU対策。。
-        confs = keras.layers.Lambda(lambda c: c[:, :, :-4], K.int_shape(output)[1:-1] + (od.nb_classes,))(output)
-        locs = keras.layers.Lambda(lambda c: c[:, :, -4:], K.int_shape(output)[1:-1] + (4,))(output)
+        confs = keras.layers.Lambda(lambda c: c[:, :, :-5], K.int_shape(output)[1:-1] + (od.nb_classes,))(output)
+        locs = keras.layers.Lambda(lambda c: c[:, :, -5:-1], K.int_shape(output)[1:-1] + (4,))(output)
+        ious = keras.layers.Lambda(lambda c: c[:, :, -1:], K.int_shape(output)[1:-1] + (1,))(output)
 
     objclasses = keras.layers.Lambda(lambda c: K.argmax(c[:, :, 1:], axis=-1) + 1, K.int_shape(confs)[1:-1])(confs)
-    objconfs = keras.layers.Lambda(lambda c: K.max(c[:, :, 1:], axis=-1), K.int_shape(confs)[1:-1])(confs)
+    objconfs = keras.layers.Lambda(lambda x: K.max(x[0][:, :, 1:], axis=-1) * x[1][:, :, 0], K.int_shape(confs)[1:-1])([confs, ious])
     locs = keras.layers.Lambda(lambda l: K.clip(l * od.pb_scales + od.pb_locs, 0, 1), K.int_shape(locs))(locs)
 
     return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])

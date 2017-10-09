@@ -99,7 +99,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             batch_size = _BATCH_SIZE * gpu_count
             keras.utils.plot_model(model, str(result_dir.joinpath('model.multigpu.png')), show_shapes=True)
 
-        model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
+        model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, od.metrics)
 
         gen = Generator(image_size=od.input_size, od=od)
 
@@ -130,7 +130,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
                 if hasattr(layer, 'layers'):  # multigpu対策(仮)
                     for l in layer.layers:
                         l.trainable = True
-            model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, [od.loss_loc, od.acc_bg, od.acc_obj])
+            model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, od.metrics)
             logger.debug('Trainable params: %d', tk.dl.count_trainable_params(model))
 
         callbacks[0].lr_list = _LR_LIST_DEBUG if args.debug else _LR_LIST
