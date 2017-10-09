@@ -117,17 +117,29 @@ def _create_auxnet(x, ref):
     from model import ObjectDetector
 
     if _BASENET_TYPE == 'resnet50':
-        shared_conv = keras.layers.Conv2D(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv')
+        shared_layers = {
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv2'),
+            'c3': keras.layers.Conv2D(64, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv3'),
+        }
+
+        def _shared_block(x):
+            b = shared_layers['c1'](x)
+            x = keras.layers.Concatenate()([x, b])
+            b = shared_layers['c2'](x)
+            x = keras.layers.Concatenate()([x, b])
+            x = shared_layers['c3'](x)
+            return x
 
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage1_c')(x)
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c1')(x)
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c2')(x)
-        x = shared_conv(x)
+        x = _shared_block(x)
         for fm_count in ObjectDetector.FM_COUNTS:
             x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
-            x = shared_conv(x)
+            x = _shared_block(x)
             assert K.int_shape(x)[1] == fm_count
             ref['aux{}'.format(fm_count)] = x
     else:
