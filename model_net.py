@@ -197,6 +197,8 @@ def _upblock(x, ref, fm_count):
     t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(fm_count))(t)
     a = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_ax'.format(fm_count))(a)
     x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t, a])
+    x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(fm_count))(x)
+    x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(fm_count))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(fm_count))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c3'.format(fm_count))(x)
 
@@ -207,8 +209,8 @@ def _upblock(x, ref, fm_count):
 def _create_pm(od, ref):
     """Prediction module."""
     import keras
-    from model import ObjectDetector
     from keras.regularizers import l2
+    from model import ObjectDetector
 
     # スケール間で重みを共有するレイヤーの作成
     shared_layers = {}
