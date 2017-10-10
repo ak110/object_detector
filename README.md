@@ -4,14 +4,24 @@
 
 ## 現在の性能
 
-VOC07+12 trainvalで学習してVOC07 testで検証。
+|Model   |backbone      |train    |test  |mAP |備考|
+|:-------|:-------------|:--------|:-----|---:|:---|
+|`現在`  |ResNet50      |VOC 07+12|VOC 07|74.6||
+|YOLOv2  |Darknet19     |VOC 07+12|VOC 07|73.7|FPSを揃えないとフェアじゃないかも|
+|SSD300  |VGG           |VOC 07+12|VOC 07|76.8||
+|SSD321  |ResNet101     |VOC 07+12|VOC 07|77.1||
+|SSD300* |VGG           |VOC 07+12|VOC 07|77.5||
+|DSOD300 |DS/64-192-48-1|VOC 07+12|VOC 07|77.7||
+|DSSD321 |ResNet101     |VOC 07+12|VOC 07|78.6||
+
+やってることの割になんか低いので、どこかバグってるか変なパラメータがありそう…
+
+あと計算方法によって何故か結構違う(不安):
 
 ```txt
-601s - loss: 1.9327 - loss_loc: 1.2565 - acc_bg: 1.0000 - acc_obj: 0.3237 - val_loss: 1.9300 - val_loss_loc: 1.2857 - val_acc_bg: 0.9999 - val_acc_obj: 0.3535
-mAP=0.7544 mAP(VOC2007)=0.7329
+mAP=0.7680 mAP(VOC2007)=0.7458
 ```
 
-(やってることの割になんか低いので、どこかバグってるか変なパラメータがありそう…)
 
 ## やってること
 
@@ -21,13 +31,19 @@ mAP=0.7544 mAP(VOC2007)=0.7329
 
 ImageNet学習済みResNet50 + FPN風
 
-参考: DSSD、DSOD、FPN
+参考にしたもの: DSSD、DSOD、FPN
 
-あと補助的に小さいネットワークで、入力からAveragePooling＋重み共有のCNNの結果をFPN風のtop-down部分に合流させてみている。(怪)
+あと補助的に、入力からAveragePooling＋重み共有の小さいネットワークをtop-down部分に合流させてみている。(怪)
 
 ### 活性化関数
 
-ELU (怪: ほぼ趣味)
+ELU (ほぼ趣味)
+
+### 初期化
+
+最後以外はhe_uniform、最後はzeros。 (ほぼ趣味)
+
+最後をゼロにしておくと学習開始直後がちょっと安定する気がする。
 
 ### Prior box
 
@@ -39,10 +55,12 @@ feature mapは、40x40 ～ 5x5の4つ。(最後だけ奇数にして残りは2�
 
 ### 損失関数
 
-Focal loss + L1-smooth loss。
+Focal loss + L1-smooth loss + Binary crossentropy。
+
+最後のは、予測結果のboxと答えのboxのIoUを回帰して分類のconfidenceと合わせて使用するもの。 (ほぼ趣味)
 
 ### DataAugmentation
 
 Random Erasingほか手当たり次第に。
 
-random cropはせず、代わりに上下左右にランダムサイズのパディング。(とりあえず)
+TODO: random crop
