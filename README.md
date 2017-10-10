@@ -62,5 +62,3 @@ Focal loss + L1-smooth loss + Binary crossentropy。
 ### DataAugmentation
 
 Random Erasingほか手当たり次第に。
-
-TODO: random crop

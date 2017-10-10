@@ -9,10 +9,11 @@ from model_net import get_preprocess_input
 class Generator(tk.image.ImageDataGenerator):
     """データのGenerator。"""
 
-    def __init__(self, image_size, od: ObjectDetector):
+    def __init__(self, image_size, od: ObjectDetector, preprocess_input=get_preprocess_input()):
         self.od = od
-        super().__init__(image_size, preprocess_input=get_preprocess_input())
+        super().__init__(image_size, preprocess_input=preprocess_input)
         self.add(0.5, tk.image.RandomErasing())
+        self.add(1.0, tk.image.RandomErasing(object_aware=True, object_aware_prob=0.5))
         self.add(0.125, tk.image.RandomBlur())
         self.add(0.125, tk.image.RandomBlur(partial=True))
         self.add(0.125, tk.image.RandomUnsharpMask())
@@ -42,21 +43,61 @@ class Generator(tk.image.ImageDataGenerator):
             rgb = tk.ndimage.flip_lr(rgb)
             if y is not None:
                 y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
-        # padding
         if rand.rand() <= 0.5:
+            # padding (zoom out)
             old_w, old_h = rgb.shape[1], rgb.shape[0]
-            pad_x1 = int(round(old_w * rand.uniform(0, 0.5)))
-            pad_y1 = int(round(old_h * rand.uniform(0, 0.5)))
-            pad_x2 = int(round(old_w * rand.uniform(0, 0.5)))
-            pad_y2 = int(round(old_h * rand.uniform(0, 0.5)))
-            rgb = tk.ndimage.pad_ltrb(rgb, pad_x1, pad_y1, pad_x2, pad_y2)
-            if y is not None:
-                assert rgb.shape[1] == pad_x1 + old_w + pad_x2
-                assert rgb.shape[0] == pad_y1 + old_h + pad_y2
-                y.bboxes[:, 0] = (pad_x1 / rgb.shape[1]) + y.bboxes[:, 0] * (old_w / rgb.shape[1])
-                y.bboxes[:, 1] = (pad_y1 / rgb.shape[0]) + y.bboxes[:, 1] * (old_h / rgb.shape[0])
-                y.bboxes[:, 2] = (pad_x1 / rgb.shape[1]) + y.bboxes[:, 2] * (old_w / rgb.shape[1])
-                y.bboxes[:, 3] = (pad_y1 / rgb.shape[0]) + y.bboxes[:, 3] * (old_h / rgb.shape[0])
+            for _ in range(30):
+                pw = int(round(old_w * np.random.uniform(1, 4)))
+                ph = int(round(old_h * np.random.uniform(1, 4)))
+                px = rand.randint(0, pw - old_w + 1)
+                py = rand.randint(0, ph - old_h + 1)
+                if y is not None:
+                    bboxes = np.copy(y.bboxes)
+                    bboxes[:, (0, 2)] = px + bboxes[:, (0, 2)] * old_w
+                    bboxes[:, (1, 3)] = py + bboxes[:, (1, 3)] * old_h
+                    sb = np.round(bboxes * np.tile([self.image_size[1] / pw, self.image_size[0] / ph], 2))
+                    if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
+                        continue
+                    y.bboxes = bboxes / np.tile([pw, ph], 2)
+                rgb = tk.ndimage.pad_ltrb(rgb, px, py, pw - old_w - px, ph - old_h - py)
+                assert rgb.shape[1] == pw
+                assert rgb.shape[0] == ph
+                break
+        else:
+            # crop (zoom in)
+            # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
+            bb_center = (y.bboxes[:, 2:] - y.bboxes[:, :2]) / 2  # y.bboxesの中央の座標
+            bb_center *= [rgb.shape[1], rgb.shape[0]]
+            for _ in range(30):
+                crop_rate = 0.15625
+                aspect_rations = (3 / 4, 4 / 3)
+                aspect_prob = 0.5
+                cr = rand.uniform(1 - crop_rate, 1)  # 元のサイズに対する割合
+                ar = np.sqrt(rand.choice(aspect_rations)) if rand.rand() <= aspect_prob else 1
+                cw = min(rgb.shape[1], int(np.floor(rgb.shape[1] * cr * ar)))
+                ch = min(rgb.shape[0], int(np.floor(rgb.shape[0] * cr / ar)))
+                cx = rand.randint(0, rgb.shape[1] - cw + 1)
+                cy = rand.randint(0, rgb.shape[0] - ch + 1)
+                # 全bboxの中央の座標を含む場合のみOKとする
+                if np.logical_and([cx, cy] <= bb_center, bb_center <= [cx + cw, cy + ch]).all():
+                    # 座標の補正
+                    if y is not None:
+                        bboxes = np.copy(y.bboxes)
+                        bboxes[:, (0, 2)] = np.round(bboxes[:, (0, 2)] * rgb.shape[1] - cx)
+                        bboxes[:, (1, 3)] = np.round(bboxes[:, (1, 3)] * rgb.shape[0] - cy)
+                        bboxes = np.clip(bboxes, 0, 1)
+                        sb = np.round(bboxes * np.tile([self.image_size[1] / cw, self.image_size[0] / ch], 2))
+                        if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
+                            continue
+                        if (bboxes[:, 2:] - bboxes[:, :2] < 8).any():  # あまりに小さいのはNG
+                            continue
+                        y.bboxes = bboxes / np.tile([cw, ch], 2)
+                    # 切り抜き
+                    rgb = tk.ndimage.crop(rgb, cx, cy, cw, ch)
+                    assert rgb.shape[1] == cw
+                    assert rgb.shape[0] == ch
+                    break
+
         return rgb, y, w
 
 
@@ -75,7 +116,7 @@ def _check():
 
     (_, _), (X_test, y_test) = load_data(data_dir, True, 1)
 
-    gen = Generator((512, 512), od=None)
+    gen = Generator((512, 512), od=None, preprocess_input=tk.image.preprocess_input_abs1)
     for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=128), gen.flow(X_test, y_test, data_augmentation=True)):
         for X, y in zip(X_batch, y_batch):
             X = tk.image.unpreprocess_input_abs1(X)

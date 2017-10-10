@@ -21,8 +21,8 @@ from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 8
 _LR_LIST_DEBUG = [1e-2] * 8 + [1e-3] * 4 + [1e-4] * 4
-_LR_LIST_FREEZE = [1e-2] * 32 + [1e-3] * 16
-_LR_LIST = [1e-3] * 32 + [1e-4] * 16 + [1e-5] * 8
+_LR_LIST_FREEZE = [1e-2] * 48 + [1e-3] * 24
+_LR_LIST = [1e-3] * 48 + [1e-4] * 24 + [1e-5] * 12
 
 
 def _main():
