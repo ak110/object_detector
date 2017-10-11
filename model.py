@@ -10,7 +10,7 @@ from tqdm import tqdm
 import model_net
 import pytoolkit as tk
 
-_TRAIN_DIFFICULT = True
+_TRAIN_DIFFICULT = False
 
 
 class ObjectDetector(object):
@@ -239,8 +239,10 @@ class ObjectDetector(object):
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
         # 画像ごとのループ
         for i, y in enumerate(y_gt):
+            bboxes = y.bboxes if _TRAIN_DIFFICULT or y.difficults is None else y.bboxes[np.logical_not(y.difficults)]
+
             # prior_boxesとbboxesで重なっているものを探す
-            iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
+            iou = tk.ml.compute_iou(self.pb_locs, bboxes)
 
             # 割り当てようとしているgt_ix
             pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
@@ -269,7 +271,7 @@ class ObjectDetector(object):
                 confs[i, pb_ix, 0] = 0  # bg
                 confs[i, pb_ix, class_id] = 1
                 # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
-                locs[i, pb_ix, :] = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+                locs[i, pb_ix, :] = (bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
