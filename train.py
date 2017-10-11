@@ -19,7 +19,7 @@ from generator import Generator
 from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
-_BATCH_SIZE = 8
+_BATCH_SIZE = 12
 _LR_LIST_DEBUG = [1e-2] * 8 + [1e-3] * 4 + [1e-4] * 4
 _LR_LIST_FREEZE = [1e-2] * 48 + [1e-3] * 24
 _LR_LIST = [1e-3] * 32 + [1e-4] * 16 + [1e-5] * 8

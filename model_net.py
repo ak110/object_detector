@@ -136,7 +136,6 @@ def _create_auxnet(x, ref):
         x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
         x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c1')(x)
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c2')(x)
-        x = _shared_block(x)
         for fm_count in ObjectDetector.FM_COUNTS:
             x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
             x = _shared_block(x)
@@ -152,16 +151,23 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
 
     for branch in range(branches):
         if bottleneck:
-            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch) + '_c1')(x)
+            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu',
+                             kernel_initializer='he_uniform',
+                             name=name + '_b' + str(branch) + '_c1')(x)
             b = keras.layers.Dropout(0.25)(b)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch) + '_c2')(b)
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
+                             kernel_initializer='he_uniform',
+                             name=name + '_b' + str(branch) + '_c2')(b)
         else:
             b = keras.layers.Dropout(0.25)(x)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_b' + str(branch))(b)
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
+                             kernel_initializer='he_uniform',
+                             name=name + '_b' + str(branch))(b)
         x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_cat')([x, b])
 
     if compress:
-        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=name + '_sq')(x)
+        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu',
+                         kernel_initializer='he_uniform', name=name + '_sq')(x)
 
     return x
 
@@ -177,17 +183,14 @@ def _downblock(x, ref, fm_count):
     x = keras.layers.MaxPooling2D(name='down{}_ds'.format(fm_count))(x)
     assert K.int_shape(x)[1] == fm_count
 
-    x = _denseblock(x, 64, 8, bottleneck=True, compress=True, name='down{}_block'.format(fm_count))
+    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='down{}_block'.format(fm_count))
 
     ref['down{}'.format(fm_count)] = x
     return x
 
 
 def _centerblock(x):
-
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='center_c1')(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='center_c2')(x)
-
+    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='center_block')
     return x
 
 
@@ -252,7 +255,7 @@ def _create_pm(od, ref):
     def _pm(x, prefix, shlayers):
         # squeeze
         x = shlayers['sq'](x)
-        # DenseBlock (BNだけ非共有)
+        # DenseBlock
         for branch in range(4):
             b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
             b = shlayers['c' + str(branch)](b)
@@ -260,7 +263,7 @@ def _create_pm(od, ref):
         # conf/loc/iou
         conf = shlayers['conf'](x)
         loc = shlayers['loc'](x)
-        iou = shlayers['iou'](keras.layers.Concatenate()([x, loc]))
+        iou = shlayers['iou'](keras.layers.Concatenate()([x, conf, loc]))
         # reshape
         conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
         loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
