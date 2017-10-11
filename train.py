@@ -22,7 +22,7 @@ from voc_data import CLASS_NAMES, load_data
 _BATCH_SIZE = 8
 _LR_LIST_DEBUG = [1e-2] * 8 + [1e-3] * 4 + [1e-4] * 4
 _LR_LIST_FREEZE = [1e-2] * 48 + [1e-3] * 24
-_LR_LIST = [1e-3] * 48 + [1e-4] * 24 + [1e-5] * 12
+_LR_LIST = [1e-3] * 32 + [1e-4] * 16 + [1e-5] * 8
 
 
 def _main():
@@ -110,7 +110,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         # 各epoch毎にmAPを算出して表示してみる
         callbacks.append(keras.callbacks.LambdaCallback(
-            on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, epoch, result_dir)
+            on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
         ))
 
         if args.freeze:
@@ -144,7 +144,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         model.save(str(result_dir.joinpath('model.h5')))
 
         # 最終結果表示
-        evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, None, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, batch_size, None, result_dir)
 
 
 if __name__ == '__main__':
