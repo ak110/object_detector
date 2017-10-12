@@ -20,9 +20,8 @@ from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 16
-_LR_LIST_DEBUG = [1e-2] * 8 + [1e-3] * 4 + [1e-4] * 4
-_LR_LIST_FREEZE = [1e-2] * 48 + [1e-3] * 24
-_LR_LIST = [1e-3] * 32 + [1e-4] * 16 + [1e-5] * 8
+_LR_LIST_DEBUG = [1e-1] * 8 + [1e-2] * 4 + [1e-3] * 2
+_LR_LIST = [1e-1] * 32 + [1e-2] * 16 + [1e-3] * 8 + [1e-4] * 4
 
 
 def _main():
@@ -36,7 +35,6 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
-    parser.add_argument('--freeze', help='学習済みモデル部分を学習しない。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     args = parser.parse_args()
 
@@ -71,7 +69,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     import keras.backend as K
     K.set_image_dim_ordering('tf')
     with tk.dl.session():
-        model = od.create_network(freeze=args.freeze)
+        model, lr_multipliers = od.create_network()
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
@@ -94,7 +92,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             batch_size = _BATCH_SIZE * gpu_count
             keras.utils.plot_model(model, str(result_dir.joinpath('model.multigpu.png')), show_shapes=True)
 
-        model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, od.metrics)
+        model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 
         gen = Generator(image_size=od.input_size, od=od)
 
@@ -107,26 +105,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         callbacks.append(keras.callbacks.LambdaCallback(
             on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
         ))
-
-        if args.freeze:
-            callbacks[0].lr_list = _LR_LIST_FREEZE
-            model.fit_generator(
-                gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
-                steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
-                epochs=len(callbacks[0].lr_list),
-                validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
-                validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
-                callbacks=callbacks)
-            callbacks[0].append = True
-            model.save(str(result_dir.joinpath('model.freezed.h5')))  # やり直したりするとき用に保存しておく
-
-            for layer in model.layers:
-                layer.trainable = True
-                if hasattr(layer, 'layers'):  # multigpu対策(仮)
-                    for l in layer.layers:
-                        l.trainable = True
-            model.compile(keras.optimizers.SGD(momentum=0.9, nesterov=True), od.loss, od.metrics)
-            logger.debug('Trainable params: %d', tk.dl.count_trainable_params(model))
 
         callbacks[0].lr_list = _LR_LIST_DEBUG if args.debug else _LR_LIST
         model.fit_generator(

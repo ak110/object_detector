@@ -6,26 +6,24 @@ import pytoolkit as tk
 _BASENET_TYPE = 'resnet50'
 
 
-def create_network(od, freeze):
+def create_network(od):
     """モデルの作成。"""
     import keras
     from model import ObjectDetector
 
     # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(od.input_size + (3,))
-    x, ref = _create_basenet(x, freeze)
+    x, ref, lr_multipliers = _create_basenet(x)
     # center
     x = _centerblock(x)
-    # auxnet
-    _create_auxnet(inputs, ref)
     # upsampling
     for fm_count in ObjectDetector.FM_COUNTS[::-1]:
         x = _upblock(x, ref, fm_count)
 
     # prediction module
-    outputs = _create_pm(od, ref)
+    outputs = _create_pm(od, ref, lr_multipliers)
 
-    return keras.models.Model(inputs=inputs, outputs=outputs)
+    return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
 
 
 def get_input_size():
@@ -46,13 +44,14 @@ def get_preprocess_input():
         return tk.image.preprocess_input_abs1
 
 
-def _create_basenet(x, freeze):
+def _create_basenet(x):
     """ベースネットワークの作成。"""
     import keras
     import keras.backend as K
     from model import ObjectDetector
 
     ref = {}
+    lr_multipliers = {}
     if _BASENET_TYPE == 'custom':
         x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='elu', kernel_initializer='he_uniform', name='stage1_conv1')(x)  # 160x160
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv2')(x)
@@ -62,9 +61,9 @@ def _create_basenet(x, freeze):
             x = _downblock(x, ref, fm_count)
     elif _BASENET_TYPE == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
-        if freeze:
-            for layer in basenet.layers:
-                layer.trainable = False
+        for layer in basenet.layers:
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, [1e-3] * len(w)))
         ref['down{}'.format(40)] = basenet.get_layer(name='res4a_branch2a').input
         ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
         ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
@@ -73,9 +72,9 @@ def _create_basenet(x, freeze):
             x = _downblock(x, ref, fm_count)
     elif _BASENET_TYPE == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
-        if freeze:
-            for layer in basenet.layers:
-                layer.trainable = False
+        for layer in basenet.layers:
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, [1e-3] * len(w)))
         ref['down{}'.format(40)] = basenet.get_layer(name='block4_sepconv1_act').input
         ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
         ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
@@ -90,42 +89,7 @@ def _create_basenet(x, freeze):
         x = ref['down{}'.format(fm_count)]
         assert K.int_shape(x)[1] == fm_count
 
-    return x, ref
-
-
-def _create_auxnet(x, ref):
-    """補助的なネットワークの作成。"""
-    import keras
-    import keras.backend as K
-    from model import ObjectDetector
-
-    if _BASENET_TYPE == 'resnet50':
-        shared_layers = {
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv2'),
-            'c3': keras.layers.Conv2D(64, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_conv3'),
-        }
-
-        def _shared_block(x):
-            b = shared_layers['c1'](x)
-            x = keras.layers.Concatenate()([x, b])
-            b = shared_layers['c2'](x)
-            x = keras.layers.Concatenate()([x, b])
-            x = shared_layers['c3'](x)
-            return x
-
-        x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux_stage0_ds')(x)
-        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage1_c')(x)
-        x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='valid', name='aux_stage1_ds')(x)
-        x = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c1')(x)
-        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='aux_stage2_c2')(x)
-        for fm_count in ObjectDetector.FM_COUNTS:
-            x = keras.layers.AveragePooling2D((3, 3), (2, 2), padding='same', name='aux{}_ds'.format(fm_count))(x)
-            x = _shared_block(x)
-            assert K.int_shape(x)[1] == fm_count
-            ref['aux{}'.format(fm_count)] = x
-    else:
-        assert False
+    return x, ref, lr_multipliers
 
 
 def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
@@ -182,7 +146,6 @@ def _upblock(x, ref, fm_count):
     import keras.backend as K
 
     t = ref['down{}'.format(fm_count)]
-    a = ref['aux{}'.format(fm_count)]
 
     if K.int_shape(x)[1] != fm_count:
         x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
@@ -190,8 +153,7 @@ def _upblock(x, ref, fm_count):
 
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(fm_count))(x)
     t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(fm_count))(t)
-    a = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_ax'.format(fm_count))(a)
-    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t, a])
+    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t])
     x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(fm_count))(x)
     x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(fm_count))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(fm_count))(x)
@@ -201,7 +163,7 @@ def _upblock(x, ref, fm_count):
     return x
 
 
-def _create_pm(od, ref):
+def _create_pm(od, ref, lr_multipliers):
     """Prediction module."""
     import keras
     from keras.regularizers import l2
@@ -269,6 +231,12 @@ def _create_pm(od, ref):
     # いったんくっつける (損失関数の中で分割して使う)
     outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
 
+    # 学習率の調整
+    m = [1 / len(ObjectDetector.FM_COUNTS)]
+    for shlayers in shared_layers.values():
+        for layer in shlayers.values():
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, m * len(w)))
     return outputs
 
 

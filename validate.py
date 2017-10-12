@@ -52,7 +52,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     with tk.dl.session():
         # モデルの読み込み
         od = sklearn.externals.joblib.load(str(result_dir.joinpath('model.pkl')))
-        model = od.create_network()
+        model, _ = od.create_network()
         model.load_weights(str(result_dir.joinpath('model.best.h5')), by_name=True)
 
         # 評価
