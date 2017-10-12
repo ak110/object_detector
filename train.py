@@ -35,7 +35,6 @@ def _main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
-    parser.add_argument('--pretrained', help='pretrained start。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
     parser.add_argument('--freeze', help='学習済みモデル部分を学習しない。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
@@ -80,11 +79,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         # keras.utils.plot_model(model, str(result_dir.joinpath('model.png')))
 
         # 学習済み重みの読み込み
-        if args.pretrained:
-            model_path = result_dir.parent.joinpath('results_pretrain', 'model.h5')
-            tk.dl.load_weights(model, model_path)
-            logger.debug('load pretrained weights: %s', model_path.name)
-        elif args.warm:
+        if args.warm:
             model_path = result_dir.joinpath('model.best.h5')
             tk.dl.load_weights(model, model_path)
             logger.debug('warm start: %s', model_path.name)

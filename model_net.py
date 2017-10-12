@@ -6,23 +6,6 @@ import pytoolkit as tk
 _BASENET_TYPE = 'resnet50'
 
 
-def create_pretrain_network(input_shape, nb_classes):
-    """モデルの作成。"""
-    import keras
-
-    # downsampling (ベースネットワーク)
-    x = inputs = keras.layers.Input(input_shape)
-    x, _ = _create_basenet(x, freeze=False)
-    # center
-    x = _centerblock(x)
-
-    # prediction
-    x = keras.layers.GlobalAveragePooling2D(name='pool')(x)
-    x = keras.layers.Dense(nb_classes, activation='softmax', kernel_regularizer='l2', name='pretrain_predictions')(x)
-
-    return keras.models.Model(inputs=inputs, outputs=x)
-
-
 def create_network(od, freeze):
     """モデルの作成。"""
     import keras
