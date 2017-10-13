@@ -20,9 +20,9 @@ from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 16
-_LR_LIST_DEBUG = [1e-1] * 8 + [1e-2] * 4 + [1e-3] * 2
-_LR_LIST_WARM = [1e-1] * 16 + [1e-2] * 8 + [1e-3] * 4  # 状況によりけりだが、とりあえず半分回す。
-_LR_LIST = [1e-1] * 32 + [1e-2] * 16 + [1e-3] * 8
+_BASE_EPOCH_DEBUG = 8
+_BASE_EPOCH_WARM = 20  # 状況によりけりだが、とりあえず半分にしておく
+_BASE_EPOCH = 40
 
 
 def _main():
@@ -98,11 +98,13 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         gen = Generator(image_size=od.input_size, od=od)
 
         if args.debug:
-            lr_list = _LR_LIST_DEBUG
+            base_epoch = _BASE_EPOCH_DEBUG
         elif args.warm:
-            lr_list = _LR_LIST_WARM
+            base_epoch = _BASE_EPOCH_WARM
         else:
-            lr_list = _LR_LIST
+            base_epoch = _BASE_EPOCH
+        base_lr = 1e-1 * np.sqrt(batch_size) / np.sqrt(128)
+        lr_list = [base_lr] * base_epoch + [base_lr / 10] * (base_epoch // 2) + [base_lr / 100] * (base_epoch // 4)
         epochs = len(lr_list)
 
         callbacks = []
