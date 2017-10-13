@@ -138,6 +138,17 @@ class ObjectDetector(object):
         self.pb_info_indices = np.array(self.pb_info_indices)
         self.pb_scales = np.array(self.pb_scales) * 0.1  # SSD風適当スケーリング
 
+    def _encode_locs(self, bboxes, bb_ix, pb_ix):
+        """座標を学習用に変換。
+
+        とりあえずx1, y1, x2, y2の回帰としてやってみる。
+        """
+        return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+
+    def _decode_locs(self, delta, xp):
+        """_encode_locsの逆変換。xpはnumpy or keras.backend。"""
+        return xp.clip(delta * self.pb_scales + self.pb_locs, 0, 1)
+
     def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
         y_true = []
@@ -164,7 +175,7 @@ class ObjectDetector(object):
                 if success:
                     rec_counts.append(np.count_nonzero(m))
                     pb_ix = iou[:, gt_ix].argmax()
-                    delta_locs = (y.bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+                    delta_locs = self._encode_locs(y.bboxes, gt_ix, pb_ix)
                     match_counts[self.pb_info_indices[pb_ix]] += 1
                     rec_delta_locs.append(delta_locs)
 
@@ -267,11 +278,9 @@ class ObjectDetector(object):
                 gt_ix = pb_candidates[pb_ix]
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
-                # confs: 該当のクラスだけ>=_IOU_TH、残りはbg、他は0にする。
                 confs[i, pb_ix, 0] = 0  # bg
                 confs[i, pb_ix, class_id] = 1
-                # locs: xmin, ymin, xmax, ymaxそれぞれのoffsetを回帰する。(スケーリングもする)
-                locs[i, pb_ix, :] = (bboxes[gt_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
+                locs[i, pb_ix, :] = self._encode_locs(bboxes, gt_ix, pb_ix)
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
@@ -421,8 +430,8 @@ class ObjectDetector(object):
         gt_locsとpred_locsからIOUを算出し、それとpred_iouのbinary crossentropyを返す。
         """
         import keras.backend as K
-        bboxes_a = K.clip(gt_locs * self.pb_scales + self.pb_locs, 0, 1)
-        bboxes_b = K.clip(pred_locs * self.pb_scales + self.pb_locs, 0, 1)
+        bboxes_a = self._decode_locs(gt_locs, K)
+        bboxes_b = self._decode_locs(pred_locs, K)
         lt = K.maximum(bboxes_a[:, :, :2], bboxes_b[:, :, :2])
         rb = K.minimum(bboxes_a[:, :, 2:], bboxes_b[:, :, 2:])
         area_inter = K.prod(rb - lt, axis=-1) * K.cast(K.all(K.less(lt, rb), axis=-1), K.floatx())

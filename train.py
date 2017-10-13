@@ -14,14 +14,15 @@ import numpy as np
 import sklearn.externals.joblib
 
 import pytoolkit as tk
-from evaluation import evaluate
+from evaluation import evaluate, evaluate_callback
 from generator import Generator
 from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
 _BATCH_SIZE = 16
 _LR_LIST_DEBUG = [1e-1] * 8 + [1e-2] * 4 + [1e-3] * 2
-_LR_LIST = [1e-1] * 32 + [1e-2] * 16 + [1e-3] * 8 + [1e-4] * 4
+_LR_LIST_WARM = [1e-1] * 16 + [1e-2] * 8 + [1e-3] * 4  # 状況によりけりだが、とりあえず半分回す。
+_LR_LIST = [1e-1] * 32 + [1e-2] * 16 + [1e-3] * 8
 
 
 def _main():
@@ -96,28 +97,34 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         gen = Generator(image_size=od.input_size, od=od)
 
+        if args.debug:
+            lr_list = _LR_LIST_DEBUG
+        elif args.warm:
+            lr_list = _LR_LIST_WARM
+        else:
+            lr_list = _LR_LIST
+        epochs = len(lr_list)
+
         callbacks = []
-        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=[0.1]))
+        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
         callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
-
-        # 各epoch毎にmAPを算出して表示してみる
         callbacks.append(keras.callbacks.LambdaCallback(
-            on_epoch_end=lambda epoch, logs: evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
+            on_epoch_end=lambda epoch, logs: evaluate_callback(
+                logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
         ))
 
-        callbacks[0].lr_list = _LR_LIST_DEBUG if args.debug else _LR_LIST
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
             steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
-            epochs=len(callbacks[0].lr_list),
+            epochs=epochs,
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
         model.save(str(result_dir.joinpath('model.h5')))
 
         # 最終結果表示
-        evaluate(logger, od, model, gen, X_test, y_test, batch_size, None, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs, result_dir)
 
 
 if __name__ == '__main__':
