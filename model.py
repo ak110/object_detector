@@ -78,24 +78,28 @@ class ObjectDetector(object):
         self.pb_locs = None
         # shape=(box数,)で、何種類目のprior boxか (集計用)
         self.pb_info_indices = None
-        # shape=(box数,4)でpred_locsのスケール
-        self.pb_scales = None
+        # shape=(box数,2)でprior boxの中心の座標
+        self.pb_centers = None
+        # shape=(box数,2)でprior boxのサイズ
+        self.pb_sizes = None
         # 各prior boxの情報をdictで保持
         self.pb_info = None
 
         self._create_prior_boxes()
 
         nb_pboxes = len(self.pb_locs)
-        assert self.pb_locs.shape == (nb_pboxes, 4)
-        assert self.pb_info_indices.shape == (nb_pboxes,)
-        assert self.pb_scales.shape == (nb_pboxes, 4)
+        assert self.pb_locs.shape == (nb_pboxes, 4), 'shape error: {}'.format(self.pb_locs.shape)
+        assert self.pb_info_indices.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_info_indices.shape)
+        assert self.pb_centers.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_centers.shape)
+        assert self.pb_sizes.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_sizes.shape)
         assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_patterns)
 
     def _create_prior_boxes(self):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
         self.pb_locs = []
         self.pb_info_indices = []
-        self.pb_scales = []
+        self.pb_centers = []
+        self.pb_sizes = []
         self.pb_info = []
         for fm_count in ObjectDetector.FM_COUNTS:
             # 敷き詰める間隔
@@ -106,17 +110,17 @@ class ObjectDetector(object):
             centers_x, centers_y = np.meshgrid(lin, lin)
             centers_x = centers_x.reshape(-1, 1)
             centers_y = centers_y.reshape(-1, 1)
-            prior_boxes_base = np.concatenate((centers_x, centers_y), axis=1)
+            prior_boxes_center = np.concatenate((centers_x, centers_y), axis=1)
             # (x, y) → タイル×(x1, y1, x2, y2)
-            prior_boxes_base = np.tile(prior_boxes_base, (1, 2))
-            assert prior_boxes_base.shape == (fm_count ** 2, 4)
+            prior_boxes_center = np.tile(prior_boxes_center, (1, 2))
+            assert prior_boxes_center.shape == (fm_count ** 2, 4)
 
             for pb_pat in self.pb_size_patterns:
                 # prior boxのサイズの基準
                 pb_size = tile_size * pb_pat
                 # prior boxのサイズ
                 # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
-                prior_boxes = np.copy(prior_boxes_base)
+                prior_boxes = np.copy(prior_boxes_center)
                 prior_boxes[:, 0] -= pb_size[0] / 2
                 prior_boxes[:, 1] -= pb_size[1] / 2
                 prior_boxes[:, 2] += pb_size[0] / 2
@@ -125,7 +129,8 @@ class ObjectDetector(object):
                 prior_boxes = np.clip(prior_boxes, 0, 1)
 
                 self.pb_locs.extend(prior_boxes)
-                self.pb_scales.extend([[pb_size[0], pb_size[1]] * 2] * len(prior_boxes))
+                self.pb_centers.extend(prior_boxes_center[:, :2])
+                self.pb_sizes.extend([[pb_size[0], pb_size[1]]] * len(prior_boxes))
                 self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
                 self.pb_info.append({
                     'fm_count': fm_count,
@@ -136,18 +141,40 @@ class ObjectDetector(object):
 
         self.pb_locs = np.array(self.pb_locs)
         self.pb_info_indices = np.array(self.pb_info_indices)
-        self.pb_scales = np.array(self.pb_scales) * 0.1  # SSD風適当スケーリング
+        self.pb_centers = np.array(self.pb_centers)
+        self.pb_sizes = np.array(self.pb_sizes)
 
-    def _encode_locs(self, bboxes, bb_ix, pb_ix):
-        """座標を学習用に変換。
+    def encode_locs(self, bboxes, bb_ix, pb_ix):
+        """座標を学習用に変換。"""
+        if True:
+            # x1, y1, x2, y2の回帰
+            return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / 0.1
+        else:
+            # SSD風のx, y, w, hの回帰
+            import keras.backend as K
+            bb_center_xy = np.mean([bboxes[bb_ix, :2], bboxes[bb_ix, 2:]], axis=0)
+            bb_wh = bboxes[bb_ix, 2:] - bboxes[bb_ix, :2]
+            encoded_xy = (bb_center_xy - self.pb_centers[pb_ix, :]) / self.pb_sizes[pb_ix, :]
+            encoded_xy /= 0.1  # SSD風適当スケーリング
+            encoded_wh = np.log(np.maximum(bb_wh / self.pb_sizes[pb_ix, :], K.epsilon()))
+            encoded_wh /= 0.2  # SSD風適当スケーリング
+            return np.concatenate([encoded_xy, encoded_wh], axis=-1)
 
-        とりあえずx1, y1, x2, y2の回帰としてやってみる。
-        """
-        return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / self.pb_scales[pb_ix, :]
-
-    def _decode_locs(self, delta, xp):
-        """_encode_locsの逆変換。xpはnumpy or keras.backend。"""
-        return xp.clip(delta * self.pb_scales + self.pb_locs, 0, 1)
+    def decode_locs(self, pred, xp):
+        """encode_locsの逆変換。xpはnumpy or keras.backend。"""
+        if True:
+            # x1, y1, x2, y2の回帰
+            decoded = pred * (0.1 * np.tile(self.pb_sizes, 2)) + self.pb_locs
+            return xp.clip(decoded, 0, 1)
+        else:
+            # SSD風のx, y, w, hの回帰
+            decoded_xy = pred[:, :, :2] * 0.1 * self.pb_sizes + self.pb_centers
+            decoded_half_wh = xp.exp(pred[:, :, 2:] * 0.2) * self.pb_sizes / 2
+            decoded = xp.concatenate([
+                decoded_xy - decoded_half_wh,
+                decoded_xy + decoded_half_wh,
+            ], axis=-1)
+            return xp.clip(decoded, 0, 1)
 
     def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
@@ -175,7 +202,7 @@ class ObjectDetector(object):
                 if success:
                     rec_counts.append(np.count_nonzero(m))
                     pb_ix = iou[:, gt_ix].argmax()
-                    delta_locs = self._encode_locs(y.bboxes, gt_ix, pb_ix)
+                    delta_locs = self.encode_locs(y.bboxes, gt_ix, pb_ix)
                     match_counts[self.pb_info_indices[pb_ix]] += 1
                     rec_delta_locs.append(delta_locs)
 
@@ -280,7 +307,7 @@ class ObjectDetector(object):
                 assert 0 < class_id < self.nb_classes
                 confs[i, pb_ix, 0] = 0  # bg
                 confs[i, pb_ix, class_id] = 1
-                locs[i, pb_ix, :] = self._encode_locs(bboxes, gt_ix, pb_ix)
+                locs[i, pb_ix, :] = self.encode_locs(bboxes, gt_ix, pb_ix)
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
@@ -430,8 +457,8 @@ class ObjectDetector(object):
         gt_locsとpred_locsからIOUを算出し、それとpred_iouのbinary crossentropyを返す。
         """
         import keras.backend as K
-        bboxes_a = self._decode_locs(gt_locs, K)
-        bboxes_b = self._decode_locs(pred_locs, K)
+        bboxes_a = self.decode_locs(gt_locs, K)
+        bboxes_b = self.decode_locs(pred_locs, K)
         lt = K.maximum(bboxes_a[:, :, :2], bboxes_b[:, :, :2])
         rb = K.minimum(bboxes_a[:, :, 2:], bboxes_b[:, :, 2:])
         area_inter = K.prod(rb - lt, axis=-1) * K.cast(K.all(K.less(lt, rb), axis=-1), K.floatx())

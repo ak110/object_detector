@@ -57,7 +57,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         # 評価
         gen = Generator(image_size=od.input_size, od=od)
-        evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, None, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, -1, result_dir)
 
 
 if __name__ == '__main__':

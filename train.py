@@ -124,7 +124,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         model.save(str(result_dir.joinpath('model.h5')))
 
         # 最終結果表示
-        evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs - 1, result_dir)
 
 
 if __name__ == '__main__':
