@@ -12,7 +12,6 @@ import pytoolkit as tk
 
 _TRAIN_DIFFICULT = False
 
-
 class ObjectDetector(object):
     """モデル。
 
@@ -287,33 +286,32 @@ class ObjectDetector(object):
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
         # 画像ごとのループ
         for i, y in enumerate(y_gt):
-            bboxes = y.bboxes if _TRAIN_DIFFICULT or y.difficults is None else y.bboxes[np.logical_not(y.difficults)]
-
-            # prior_boxesとbboxesで重なっているものを探す
-            iou = tk.ml.compute_iou(self.pb_locs, bboxes)
+            use_all = _TRAIN_DIFFICULT or y.difficults is None
+            bboxes = y.bboxes if use_all else y.bboxes[np.logical_not(y.difficults)]
+            classes = y.classes if use_all else y.classes[np.logical_not(y.difficults)]
 
             # 割り当てようとしているgt_ix
             pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
 
-            # IOUが0.5以上のものはまとめて割り当てる。1つのpboxに複数当たる場合はIOUが大きい方優先
-            mask = iou.max(axis=1) >= 0.5
-            pb_candidates[mask] = iou[mask, :].argmax(axis=1)
+            for gt_ix, bbox in enumerate(bboxes):
+                # bboxの重心が含まれるprior boxにのみ割り当てる。
+                bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
+                mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
+                assert mask.any(), 'Encode error: {}'.format(bb_center)
+                # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
+                iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[mask, :])[0]
+                mask2 = iou >= 0.5
+                if mask2.any():
+                    pb_candidates[np.where(mask)[0][mask2]] = gt_ix
+                else:
+                    pb_candidates[np.where(mask)[0][iou.argmax()]] = gt_ix
 
-            # 0.5以上のものが無いgt_ixはIOUが一番大きいものに割り当てる
-            failed_ix_list = np.where(iou.max(axis=0) < 0.5)[0]
-            for gt_ix in failed_ix_list:
-                pb_ix = iou[:, gt_ix].argmax()
-                if False:  # ↓何故か毎回出てしまうためとりあえず無効化
-                    if pb_candidates[pb_ix] >= 0:  # 割り当て済みな場合
-                        if iou[pb_ix, pb_candidates[pb_ix]] < 0.5:
-                            warnings.warn('IOU < 0.5での割り当ての重複: {}'.format(y.filename))
-                pb_candidates[pb_ix] = gt_ix
-
+            # 割り当て
             pb_ixs = np.where(pb_candidates >= 0)[0]
             assert len(pb_ixs) >= 1
             for pb_ix in pb_ixs:
                 gt_ix = pb_candidates[pb_ix]
-                class_id = y.classes[gt_ix]
+                class_id = classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
                 confs[i, pb_ix, 0] = 0  # bg
                 confs[i, pb_ix, class_id] = 1
