@@ -15,7 +15,7 @@
 |SSD300* |300x300   |VGG               |77.2|  46|
 |DSOD    |300x300   |DS/64-192-48-1    |77.7|  17|
 |DSSD 321|321x321   |ResNet101         |78.6|  14|
-|YOLOv2  |544x544   |Darknet19         |78.6|  40|
+|YOLO9000|544x544   |Darknet19         |78.6|  40|
 |SSD512* |512x512   |VGG               |79.8|  19|
 |DSSD 513|513x513   |ResNet101         |81.5|   7|
 
@@ -47,20 +47,11 @@ ResNet50 + FPN風
 
 使用するfeature mapは、40x40 ～ 5x5の4つ。(最後だけ奇数にして残りは2倍ずつにしてみた)
 
-feature map毎に8種類のprior boxを作る。
+feature map毎に8種類のprior boxを出力する。
 
-パラメータとして、grid cellのサイズに対するwidth/heightの割合を8セット必要とする。(全feature mapで共有)
-
-例えばその1つを `widthの割合 = 1.5` 、 `heightの割合 = 2.0` とすると、
-40x40のfeature mapに対しては、Prior boxの大きさが以下のようになる。
-
-```txt
-横幅 = 入力画像の横幅 × 1/40 × 1.5
-縦幅 = 入力画像の縦幅 × 1/40 × 2.0
-```
-
-このパラメータは、事前に訓練データからKMeansを使って決める。
-(YOLOv2のDimension Clustersの簡易版のつもり)
+8種類のprior boxのサイズ・アスペクト比は、訓練データから、距離を `1 - IoU` としたKMeansを使用して決める。
+IoUは重心が一致している想定で算出する。
+([YOLO9000](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
 
 ### 損失関数：分類
 

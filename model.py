@@ -34,31 +34,31 @@ class ObjectDetector(object):
 
         # bboxのサイズ
         bboxes = np.concatenate([y.bboxes for y in y_train])
-        bboxes_size_list = bboxes[:, 2:] - bboxes[:, :2]
-        bboxes_base_size_list = bboxes_size_list.min(axis=-1)  # 短辺のサイズのリスト
-        # bboxes_base_size_list = np.sqrt(bboxes_size_list.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
+        bboxes_sizes = bboxes[:, 2:] - bboxes[:, :2]
+        bb_base_sizes = bboxes_sizes.min(axis=-1)  # 短辺のサイズのリスト
+        # bb_base_sizes = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         tile_sizes = 1 / np.array(ObjectDetector.FM_COUNTS)
-        pb_size_patterns = []
+        bboxes_size_patterns = []
         for tile_size in tile_sizes:
-            if tile_size == tile_sizes.max():
-                mask = bboxes_base_size_list >= tile_size
-            elif tile_size == tile_sizes.min():
-                mask = bboxes_base_size_list < tile_size * 2
+            if tile_size == tile_sizes.min():
+                mask = bb_base_sizes < tile_size * 2
+            elif tile_size == tile_sizes.max():
+                mask = bb_base_sizes >= tile_size
             else:
-                mask = np.logical_and(bboxes_base_size_list >= tile_size, bboxes_base_size_list < tile_size * 2)
-            pb_size_patterns.append(bboxes_size_list[mask] / tile_size)
-        pb_size_patterns = np.concatenate(pb_size_patterns)
-        assert len(pb_size_patterns.shape) == 2
-        assert pb_size_patterns.shape[1] == 2
+                mask = np.logical_and(
+                    bb_base_sizes >= tile_size,
+                    bb_base_sizes < tile_size * 2)
+            bboxes_size_patterns.append(bboxes_sizes[mask] / tile_size)
+        bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
+        assert len(bboxes_size_patterns.shape) == 2
+        assert bboxes_size_patterns.shape[1] == 2
 
-        # 相対サイズをクラスタリング
-        cluster = sklearn.cluster.KMeans(n_clusters=pb_size_pattern_count, n_jobs=-1)
-        cluster.fit(np.log(pb_size_patterns))
-        pb_size_patterns = np.exp(cluster.cluster_centers_)
+        # リストアップしたものをクラスタリング。(YOLOv2のDimension Clusters)。
+        cluster = tk.ml.cluster_by_iou(bboxes_size_patterns, n_clusters=pb_size_pattern_count, n_jobs=-1)
+        pb_size_patterns = cluster.cluster_centers_
         assert pb_size_patterns.shape == (pb_size_pattern_count, 2)
-        pb_size_patterns = pb_size_patterns[pb_size_patterns.prod(axis=-1).argsort(), :]  # 面積昇順に並べ替え (一応)
 
         return cls(nb_classes, mean_objets, pb_size_patterns)
 
@@ -68,7 +68,8 @@ class ObjectDetector(object):
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
         # 1 / fm_countに対する、prior boxの基準サイズの割合。[1.5, 0.5] なら横が1.5倍、縦が0.5倍のものを用意。
-        self.pb_size_patterns = pb_size_patterns.astype(np.float32)
+        # 面積昇順に並べ替えておく。
+        self.pb_size_patterns = pb_size_patterns[pb_size_patterns.prod(axis=-1).argsort(), :].astype(np.float32)
         # 1 / fm_countに対する、prior boxの基準サイズの割合。(縦横の相乗平均)
         self.pb_size_ratios = np.sort(np.sqrt(pb_size_patterns[:, 0] * pb_size_patterns[:, 1]))
         # アスペクト比のリスト
@@ -177,22 +178,25 @@ class ObjectDetector(object):
             return xp.clip(decoded, 0, 1)
 
     def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
-        """データに対して`self.pb_locs`がどれくらいマッチしてるか調べる。"""
+        """データに対してprior boxがどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
         match_counts = [0] * len(self.pb_info)  # iou >= 0.5のprior boxが1つ以上存在した回数
+        max_iou_list = []  # iouの最大値のリスト
+        max_iou_is_center = []  # iouの最大値のprior boxが、重心と一致しているか否かのリスト
         unrec_widths = []  # iou < 0.5の横幅
         unrec_heights = []  # iou < 0.5の高さ
         unrec_ars = []  # iou < 0.5のアスペクト比
         rec_counts = []  # prior box毎の、iou >= 0.5の数
         rec_col_counts = []  # iou >= 0.5で2個以上のラベルが割り当たってしまったprior box数
         rec_delta_locs = []  # Δlocs
+
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
             # prior_boxesとbboxesで重なっているものを探す
             iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
             iou_mask = iou >= 0.5
 
-            # クラスごとに再現率などを算出
+            # オブジェクトごとに再現率などを算出
             for gt_ix, class_id in enumerate(y.classes):
                 assert 1 <= class_id < self.nb_classes
                 m = iou_mask[:, gt_ix]
@@ -205,6 +209,10 @@ class ObjectDetector(object):
                     delta_locs = self.encode_locs(y.bboxes, gt_ix, pb_ix)
                     match_counts[self.pb_info_indices[pb_ix]] += 1
                     rec_delta_locs.append(delta_locs)
+                max_iou_list.append(m.max())
+                max_ix = m.argmax()
+                gt_center = np.mean([y.bboxes[gt_ix, 2:], y.bboxes[gt_ix, :2]], axis=0)
+                max_iou_is_center.append(np.logical_and(self.pb_locs[max_ix, :2] <= gt_center, gt_center <= self.pb_locs[max_ix, 2:]).all())
 
             rec_col_counts.append(np.count_nonzero(np.count_nonzero(iou_mask, axis=1) >= 2))
 
@@ -231,6 +239,8 @@ class ObjectDetector(object):
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
+        logger.debug('max iou is center: %.2f', np.mean(max_iou_is_center) * 100)
+        logger.debug('Avg IOU: %.1f', np.mean(max_iou_list) * 100)  # YOLOv2の論文のTable 1相当
         # Δlocの分布調査
         # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
