@@ -103,7 +103,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             base_epoch = _BASE_EPOCH_WARM
         else:
             base_epoch = _BASE_EPOCH
-        base_lr = 1e-1 * np.sqrt(batch_size) / np.sqrt(128)
+        base_lr = 1e-1 * np.sqrt(batch_size) / np.sqrt(128) / np.sqrt(3)
         lr_list = [base_lr] * base_epoch + [base_lr / 10] * (base_epoch // 2) + [base_lr / 100] * (base_epoch // 4)
         epochs = len(lr_list)
 

@@ -63,7 +63,7 @@ def _create_basenet(x):
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [1e-3] * len(w)))
+            lr_multipliers.update(zip(w, [1 / 100] * len(w)))
         ref['down{}'.format(40)] = basenet.get_layer(name='res4a_branch2a').input
         ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
         ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
@@ -74,7 +74,7 @@ def _create_basenet(x):
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [1e-3] * len(w)))
+            lr_multipliers.update(zip(w, [1 / 100] * len(w)))
         ref['down{}'.format(40)] = basenet.get_layer(name='block4_sepconv1_act').input
         ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
         ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
