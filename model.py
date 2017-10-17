@@ -12,6 +12,7 @@ import pytoolkit as tk
 
 _TRAIN_DIFFICULT = False
 
+
 class ObjectDetector(object):
     """モデル。
 
@@ -180,43 +181,42 @@ class ObjectDetector(object):
         """データに対してprior boxがどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
-        match_counts = [0] * len(self.pb_info)  # iou >= 0.5のprior boxが1つ以上存在した回数
-        max_iou_list = []  # iouの最大値のリスト
-        max_iou_is_center = []  # iouの最大値のprior boxが、重心と一致しているか否かのリスト
+        total_errors = 0
+        assigned_iou_list_all = []
+        assigned_counts = np.zeros((len(self.pb_info),))
         unrec_widths = []  # iou < 0.5の横幅
         unrec_heights = []  # iou < 0.5の高さ
         unrec_ars = []  # iou < 0.5のアスペクト比
-        rec_counts = []  # prior box毎の、iou >= 0.5の数
-        rec_col_counts = []  # iou >= 0.5で2個以上のラベルが割り当たってしまったprior box数
         rec_delta_locs = []  # Δlocs
 
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
-            # prior_boxesとbboxesで重なっているものを探す
-            iou = tk.ml.compute_iou(self.pb_locs, y.bboxes)
-            iou_mask = iou >= 0.5
+            # 割り当ててみる
+            assigned_indices = self._assign_boxes(y.bboxes)
+            assigned_indices = list(assigned_indices)
+            assigned_pb_list, assigned_gt_list, assigned_iou_list = zip(*assigned_indices)
+
+            # 割り当てられなかった回数
+            errors = sum([gt_ix not in assigned_gt_list for gt_ix in range(len(y.bboxes))])
+            total_errors += errors
+            # 割り当てられた組み合わせのIOU
+            assigned_iou_list_all.extend(assigned_iou_list)
+            assigned_iou_list_all.extend([0] * errors)
+            # prior box毎の、割り当てられた回数
+            for pb_ix in assigned_pb_list:
+                assigned_counts[self.pb_info_indices[pb_ix]] += 1
 
             # オブジェクトごとに再現率などを算出
-            for gt_ix, class_id in enumerate(y.classes):
+            for assigned_pb, assigned_gt, assigned_iou in assigned_indices:
+                class_id = y.classes[assigned_gt]
                 assert 1 <= class_id < self.nb_classes
-                m = iou_mask[:, gt_ix]
-                success = m.any()
                 y_true.append(class_id)
-                y_pred.append(class_id if success else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
-                if success:
-                    rec_counts.append(np.count_nonzero(m))
-                    pb_ix = iou[:, gt_ix].argmax()
-                    delta_locs = self.encode_locs(y.bboxes, gt_ix, pb_ix)
-                    match_counts[self.pb_info_indices[pb_ix]] += 1
-                    rec_delta_locs.append(delta_locs)
-                max_iou_list.append(m.max())
-                max_ix = m.argmax()
-                gt_center = np.mean([y.bboxes[gt_ix, 2:], y.bboxes[gt_ix, :2]], axis=0)
-                max_iou_is_center.append(np.logical_and(self.pb_locs[max_ix, :2] <= gt_center, gt_center <= self.pb_locs[max_ix, 2:]).all())
+                y_pred.append(class_id if assigned_iou >= 0.5 else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
+                rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
 
-            rec_col_counts.append(np.count_nonzero(np.count_nonzero(iou_mask, axis=1) >= 2))
-
-            # 再現(iou >= 0.5)しなかったboxの情報を集める
-            for bbox in y.bboxes[iou.max(axis=0) < 0.5]:
+            # iou < 0.5なboxの情報を集める
+            for gt_ix, bbox in enumerate(y.bboxes):
+                if (np.array(assigned_iou_list)[np.array(assigned_gt_list) == gt_ix] >= 0.5).any():
+                    continue  # iou >= 0.5で割り当たっていたらスキップ
                 w = bbox[2] - bbox[0]
                 h = bbox[3] - bbox[1]
                 unrec_widths.append(w)
@@ -231,27 +231,25 @@ class ObjectDetector(object):
 
         # ログ出力
         logger.debug(cr)
-        logger.debug('[iou >= 0.5] counts:')
-        for i, c in enumerate(match_counts):
+        logger.debug('assigned counts:')
+        for i, c in enumerate(assigned_counts):
             logger.debug('  prior boxes{fm=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
                          self.pb_info[i]['fm_count'],
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
-        logger.debug('max iou is center: %.2f', np.mean(max_iou_is_center) * 100)
-        logger.debug('Avg IOU: %.1f', np.mean(max_iou_list) * 100)  # YOLOv2の論文のTable 1相当
+        logger.debug('total errors: %d / %d (%.02f%%)',
+                     total_errors, total_gt_boxes, 100 * total_errors / total_gt_boxes)
+        # iou < 0.5の出現率
+        logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
+                     len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
+        # YOLOv2の論文のTable 1相当の値のつもり (複数のprior boxに割り当てたときの扱いがちょっと違いそう)
+        logger.debug('Avg IOU: %.1f', np.mean(assigned_iou_list_all) * 100)
         # Δlocの分布調査
         # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
         logger.debug('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
                      delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
-        # iou < 0.5の出現率
-        logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
-                     len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
-        # iou >= 0.5での衝突の出現率
-        logger.debug('[iou >= 0.5] collision count: %d / %d (%.02f%%)',
-                     np.count_nonzero(rec_col_counts), len(y_test),
-                     100 * np.count_nonzero(rec_col_counts) / len(y_test))
 
         # ヒストグラム色々を出力
         import matplotlib.pyplot as plt
@@ -267,12 +265,6 @@ class ObjectDetector(object):
         plt.close()
         plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
-        plt.close()
-        plt.hist(rec_counts, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('rec_counts.hist.png')))
-        plt.close()
-        plt.hist(rec_col_counts, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('rec_col_counts.hist.png')))
         plt.close()
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
@@ -290,27 +282,8 @@ class ObjectDetector(object):
             bboxes = y.bboxes if use_all else y.bboxes[np.logical_not(y.difficults)]
             classes = y.classes if use_all else y.classes[np.logical_not(y.difficults)]
 
-            # 割り当てようとしているgt_ix
-            pb_candidates = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
-
-            for gt_ix, bbox in enumerate(bboxes):
-                # bboxの重心が含まれるprior boxにのみ割り当てる。
-                bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
-                mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
-                assert mask.any(), 'Encode error: {}'.format(bb_center)
-                # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
-                iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[mask, :])[0]
-                mask2 = iou >= 0.5
-                if mask2.any():
-                    pb_candidates[np.where(mask)[0][mask2]] = gt_ix
-                else:
-                    pb_candidates[np.where(mask)[0][iou.argmax()]] = gt_ix
-
-            # 割り当て
-            pb_ixs = np.where(pb_candidates >= 0)[0]
-            assert len(pb_ixs) >= 1
-            for pb_ix in pb_ixs:
-                gt_ix = pb_candidates[pb_ix]
+            assigned_indices = self._assign_boxes(bboxes)
+            for pb_ix, gt_ix, _ in assigned_indices:
                 class_id = classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
                 confs[i, pb_ix, 0] = 0  # bg
@@ -319,6 +292,46 @@ class ObjectDetector(object):
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
+
+    def _assign_boxes(self, bboxes):
+        """各bounding boxをprior boxに割り当てる。
+
+        戻り値は、prior boxのindexとbboxesのindexとiouのタプルのリスト。
+        """
+        assert len(bboxes) >= 1
+
+        assigned_gt = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
+        assigned_iou = np.zeros((len(self.pb_locs),), dtype=float)
+        assignable = np.ones((len(self.pb_locs),), dtype=bool)
+
+        # 面積の降順に並べ替え (おまじない: 出来るだけ小さいのが埋もれないように)
+        sorted_indices = np.prod(bboxes[:, 2:] - bboxes[:, :2], axis=-1).argsort()[::-1]
+
+        for gt_ix, bbox in zip(sorted_indices, bboxes[sorted_indices]):
+            # bboxの重心が含まれるprior boxにのみ割り当てる。
+            bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
+            pb_center_mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
+            assert pb_center_mask.any(), 'Encode error: {}'.format(bb_center)
+            # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
+            iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
+            iou_mask = iou >= 0.5
+            if iou_mask.any():
+                for pb_ix, pb_iou in zip(np.where(pb_center_mask)[0][iou_mask], iou[iou_mask]):
+                    # よりIoUが大きいものを優先して割り当て
+                    if assignable[pb_ix] and assigned_iou[pb_ix] < pb_iou:
+                        assigned_gt[pb_ix] = gt_ix
+                        assigned_iou[pb_ix] = pb_iou
+            else:
+                iou_mask = iou.argmax()
+                pb_mask = np.where(pb_center_mask)[0][iou_mask]
+                assigned_gt[pb_mask] = gt_ix
+                assigned_iou[pb_mask] = iou[iou_mask]
+                assignable[pb_mask] = False  # 上書き禁止！
+
+        pb_indices = np.where(assigned_gt >= 0)[0]
+        assert len(pb_indices) >= 1  # 1個以上は必ず割り当てないと損失関数などが面倒になる
+
+        return zip(pb_indices, assigned_gt[pb_indices], assigned_iou[pb_indices])
 
     def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, parallel=None):
         """予測結果のうちスコアが高いものを取り出す。
@@ -446,8 +459,7 @@ class ObjectDetector(object):
             loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs)
             loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
         else:
-            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs)
-            loss = K.maximum(loss - 0.01, 0)  # clip
+            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.75)
             loss = K.mean(loss, axis=-1)
         return loss
 

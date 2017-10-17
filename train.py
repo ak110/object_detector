@@ -97,6 +97,12 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         gen = Generator(image_size=od.input_size, od=od)
 
+        # 学習率の決定：
+        # ・CIFARやImageNetの分類では
+        #   lr 0.1～0.5、batch size 64～256くらいが多いのでその辺を基準に。
+        # ・バッチサイズのsqrtに比例させると良さそう
+        #   (cf. https://www.slideshare.net/JiroNishitoba/20170629)
+        # ・lossが分類＋回帰×4＋回帰なので、とりあえず1 / 3倍にしてみる。(怪)
         if args.debug:
             base_epoch = _BASE_EPOCH_DEBUG
         elif args.warm:
