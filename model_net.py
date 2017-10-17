@@ -157,7 +157,6 @@ def _upblock(x, ref, fm_count):
     x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(fm_count))(x)
     x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(fm_count))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(fm_count))(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c3'.format(fm_count))(x)
 
     ref['up{}'.format(fm_count)] = x
     return x
@@ -174,19 +173,19 @@ def _create_pm(od, ref, lr_multipliers):
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_sq'),
+            'sq': keras.layers.Conv2D(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_sq'),
             'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c0'),
             'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c1'),
             'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c2'),
             'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c3'),
-            'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
+            'conf': keras.layers.Conv2D(od.nb_classes, (3, 3), padding='same',
                                         kernel_initializer='zeros',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                         bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                                         activation='softmax',
                                         name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (1, 1), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+            'loc': keras.layers.Conv2D(4, (3, 3), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
                                        kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
