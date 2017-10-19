@@ -19,11 +19,6 @@ from generator import Generator
 from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
 
-_BATCH_SIZE = 16
-_BASE_EPOCH_DEBUG = 8
-_BASE_EPOCH_WARM = 20  # 状況によりけりだが、とりあえず半分にしておく
-_BASE_EPOCH = 40
-
 
 def _main():
     import matplotlib as mpl
@@ -37,6 +32,8 @@ def _main():
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
+    parser.add_argument('--epochs', help='epoch数。', default=70, type=int)
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
@@ -53,7 +50,7 @@ def _main():
 
 def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     # データの読み込み
-    (X_train, y_train), (X_test, y_test) = load_data(data_dir, args.debug, _BATCH_SIZE)
+    (X_train, y_train), (X_test, y_test) = load_data(data_dir, args.debug, args.batch_size)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
@@ -87,11 +84,10 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         gpu_count = tk.get_gpu_count()
         logger.debug('gpu count = %d', gpu_count)
         if gpu_count <= 1:
-            batch_size = _BATCH_SIZE
+            batch_size = args.batch_size
         else:
             model = tk.dl.create_data_parallel_model(model, gpu_count)
-            batch_size = _BATCH_SIZE * gpu_count
-            keras.utils.plot_model(model, str(result_dir.joinpath('model.multigpu.png')), show_shapes=True)
+            batch_size = args.batch_size * gpu_count
 
         model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 
@@ -103,14 +99,11 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         # ・バッチサイズのsqrtに比例させると良さそう
         #   (cf. https://www.slideshare.net/JiroNishitoba/20170629)
         # ・lossが分類＋回帰×4＋回帰なので、とりあえず1 / 3倍にしてみる。(怪)
-        if args.debug:
-            base_epoch = _BASE_EPOCH_DEBUG
-        elif args.warm:
-            base_epoch = _BASE_EPOCH_WARM
-        else:
-            base_epoch = _BASE_EPOCH
+        # epoch数：
+        # ・指定値 // 7 * 4 + 指定値 // 7 * 2 + 指定値 // 7。
+        base_epoch = args.epochs // 7
         base_lr = 1e-1 / 3 * np.sqrt(batch_size) / np.sqrt(128)
-        lr_list = [base_lr] * base_epoch + [base_lr / 10] * (base_epoch // 2) + [base_lr / 100] * (base_epoch // 4)
+        lr_list = [base_lr] * (base_epoch * 4) + [base_lr / 10] * (base_epoch * 2) + [base_lr / 100] * base_epoch
         epochs = len(lr_list)
 
         callbacks = []
