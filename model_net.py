@@ -182,7 +182,6 @@ def _create_pm(od, ref, lr_multipliers):
                                         kernel_initializer='zeros',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
-                                        bias_regularizer=l2(1e-4),  # bgの初期値が7.6とかなので、徐々に減らしたい
                                         activation='softmax',
                                         name=prefix + '_conf'),
             'loc': keras.layers.Conv2D(4, (3, 3), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
