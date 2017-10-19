@@ -1,6 +1,4 @@
 """ObjectDetectionのモデル。"""
-import warnings
-
 import joblib
 import numpy as np
 import sklearn.cluster
@@ -11,6 +9,8 @@ import model_net
 import pytoolkit as tk
 
 _TRAIN_DIFFICULT = False
+_VAR_LOC = 0.2  # SSD風適当スケーリング
+_VAR_SIZE = 0.2  # SSD風適当スケーリング
 
 
 class ObjectDetector(object):
@@ -149,28 +149,26 @@ class ObjectDetector(object):
         """座標を学習用に変換。"""
         if True:
             # x1, y1, x2, y2の回帰
-            return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / 0.1
+            return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / _VAR_LOC
         else:
             # SSD風のx, y, w, hの回帰
             import keras.backend as K
             bb_center_xy = np.mean([bboxes[bb_ix, :2], bboxes[bb_ix, 2:]], axis=0)
             bb_wh = bboxes[bb_ix, 2:] - bboxes[bb_ix, :2]
-            encoded_xy = (bb_center_xy - self.pb_centers[pb_ix, :]) / self.pb_sizes[pb_ix, :]
-            encoded_xy /= 0.1  # SSD風適当スケーリング
-            encoded_wh = np.log(np.maximum(bb_wh / self.pb_sizes[pb_ix, :], K.epsilon()))
-            encoded_wh /= 0.2  # SSD風適当スケーリング
+            encoded_xy = (bb_center_xy - self.pb_centers[pb_ix, :]) / self.pb_sizes[pb_ix, :] / _VAR_LOC
+            encoded_wh = np.log(np.maximum(bb_wh / self.pb_sizes[pb_ix, :], K.epsilon())) / _VAR_SIZE
             return np.concatenate([encoded_xy, encoded_wh], axis=-1)
 
     def decode_locs(self, pred, xp):
         """encode_locsの逆変換。xpはnumpy or keras.backend。"""
         if True:
             # x1, y1, x2, y2の回帰
-            decoded = pred * (0.1 * np.tile(self.pb_sizes, 2)) + self.pb_locs
+            decoded = pred * (_VAR_LOC * np.tile(self.pb_sizes, 2)) + self.pb_locs
             return xp.clip(decoded, 0, 1)
         else:
             # SSD風のx, y, w, hの回帰
-            decoded_xy = pred[:, :, :2] * 0.1 * self.pb_sizes + self.pb_centers
-            decoded_half_wh = xp.exp(pred[:, :, 2:] * 0.2) * self.pb_sizes / 2
+            decoded_xy = pred[:, :, :2] * _VAR_LOC * self.pb_sizes + self.pb_centers
+            decoded_half_wh = xp.exp(pred[:, :, 2:] * _VAR_SIZE) * self.pb_sizes / 2
             decoded = xp.concatenate([
                 decoded_xy - decoded_half_wh,
                 decoded_xy + decoded_half_wh,
@@ -182,7 +180,7 @@ class ObjectDetector(object):
         y_true = []
         y_pred = []
         total_errors = 0
-        assigned_iou_list_all = []
+        iou_list = []
         assigned_counts = np.zeros((len(self.pb_info),))
         unrec_widths = []  # iou < 0.5の横幅
         unrec_heights = []  # iou < 0.5の高さ
@@ -194,28 +192,31 @@ class ObjectDetector(object):
             assigned_indices = self._assign_boxes(y.bboxes)
             assigned_indices = list(assigned_indices)
             assigned_pb_list, assigned_gt_list, assigned_iou_list = zip(*assigned_indices)
+            assigned_gt_list = np.array(assigned_gt_list)
+            assigned_iou_list = np.array(assigned_iou_list)
 
             # 割り当てられなかった回数
             errors = sum([gt_ix not in assigned_gt_list for gt_ix in range(len(y.bboxes))])
             total_errors += errors
-            # 割り当てられた組み合わせのIOU
-            assigned_iou_list_all.extend(assigned_iou_list)
-            assigned_iou_list_all.extend([0] * errors)
             # prior box毎の、割り当てられた回数
             for pb_ix in assigned_pb_list:
                 assigned_counts[self.pb_info_indices[pb_ix]] += 1
-
-            # オブジェクトごとに再現率などを算出
-            for assigned_pb, assigned_gt, assigned_iou in assigned_indices:
-                class_id = y.classes[assigned_gt]
-                assert 1 <= class_id < self.nb_classes
-                y_true.append(class_id)
-                y_pred.append(class_id if assigned_iou >= 0.5 else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
+            # 初期の座標のずれ具合の集計
+            for assigned_pb, assigned_gt, _ in assigned_indices:
                 rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
-
-            # iou < 0.5なboxの情報を集める
+            # オブジェクトごとの最大IoUと再現率を集める
+            for gt_ix, class_id in enumerate(y.classes):
+                assert 1 <= class_id < self.nb_classes
+                gt_iou = assigned_iou_list[assigned_gt_list == gt_ix]
+                max_iou = gt_iou.max() if gt_iou.any() else 0
+                # 最大IoU
+                iou_list.append(max_iou)
+                # 再現率
+                y_true.append(class_id)
+                y_pred.append(class_id if max_iou >= 0.5 else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
+            # iou < 0.5しか無いboxの情報を集める
             for gt_ix, bbox in enumerate(y.bboxes):
-                if (np.array(assigned_iou_list)[np.array(assigned_gt_list) == gt_ix] >= 0.5).any():
+                if (assigned_iou_list[assigned_gt_list == gt_ix] >= 0.5).any():
                     continue  # iou >= 0.5で割り当たっていたらスキップ
                 w = bbox[2] - bbox[0]
                 h = bbox[3] - bbox[1]
@@ -244,7 +245,7 @@ class ObjectDetector(object):
         logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
                      len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
         # YOLOv2の論文のTable 1相当の値のつもり (複数のprior boxに割り当てたときの扱いがちょっと違いそう)
-        logger.debug('Avg IOU: %.1f', np.mean(assigned_iou_list_all) * 100)
+        logger.debug('Avg IOU: %.1f', np.mean(iou_list) * 100)
         # Δlocの分布調査
         # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
