@@ -8,7 +8,6 @@ from tqdm import tqdm
 import model_net
 import pytoolkit as tk
 
-_TRAIN_DIFFICULT = False
 _VAR_LOC = 0.2  # SSD風適当スケーリング
 _VAR_SIZE = 0.2  # SSD風適当スケーリング
 
@@ -279,17 +278,13 @@ class ObjectDetector(object):
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
         # 画像ごとのループ
         for i, y in enumerate(y_gt):
-            use_all = _TRAIN_DIFFICULT or y.difficults is None
-            bboxes = y.bboxes if use_all else y.bboxes[np.logical_not(y.difficults)]
-            classes = y.classes if use_all else y.classes[np.logical_not(y.difficults)]
-
-            assigned_indices = self._assign_boxes(bboxes)
+            assigned_indices = self._assign_boxes(y.bboxes)
             for pb_ix, gt_ix, _ in assigned_indices:
-                class_id = classes[gt_ix]
+                class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
                 confs[i, pb_ix, 0] = 0  # bg
                 confs[i, pb_ix, class_id] = 1
-                locs[i, pb_ix, :] = self.encode_locs(bboxes, gt_ix, pb_ix)
+                locs[i, pb_ix, :] = self.encode_locs(y.bboxes, gt_ix, pb_ix)
 
         # いったんくっつける (損失関数の中で分割して使う)
         return np.concatenate([confs, locs], axis=-1)
