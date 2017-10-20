@@ -18,16 +18,22 @@ class ObjectDetector(object):
     候補として最初に準備するboxの集合を持つ。
     """
 
-    # 取り出すfeature mapのサイズ
-    FM_COUNTS = (40, 20, 10, 5)
-
     @classmethod
-    def create(cls, nb_classes, y_train, pb_size_pattern_count=8):
+    def create(cls, input_size, map_size, nb_classes, y_train, pb_size_pattern_count=8):
         """訓練データからパラメータを適当に決めてインスタンスを作成する。
 
         gridに配置したときのIOUを直接最適化するのは難しそうなので、
         とりあえず大雑把にKMeansでクラスタ化したりなど。
         """
+        # feature mapのサイズのリスト。
+        map_sizes = []
+        for i in range(4):  # 最大4つ
+            ms = map_size // (2 ** i)
+            map_sizes.append(ms)
+            if ms <= 6 or ms % 2 != 0:  # 充分小さくなるか奇数になったら終了
+                break
+        map_sizes = np.array(map_sizes)
+
         # 平均オブジェクト数
         mean_objets = np.mean([len(y.bboxes) for y in y_train])
 
@@ -38,7 +44,7 @@ class ObjectDetector(object):
         # bb_base_sizes = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
-        tile_sizes = 1 / np.array(ObjectDetector.FM_COUNTS)
+        tile_sizes = 1 / map_sizes
         bboxes_size_patterns = []
         for tile_size in tile_sizes:
             if tile_size == tile_sizes.min():
@@ -59,11 +65,12 @@ class ObjectDetector(object):
         pb_size_patterns = cluster.cluster_centers_
         assert pb_size_patterns.shape == (pb_size_pattern_count, 2)
 
-        return cls(nb_classes, mean_objets, pb_size_patterns)
+        return cls(input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns)
 
-    def __init__(self, nb_classes, mean_objets, pb_size_patterns):
+    def __init__(self, input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns):
+        self.image_size = (input_size, input_size)
+        self.map_sizes = np.array(map_sizes)
         self.nb_classes = nb_classes
-        self.input_size = model_net.get_input_size()
         # 1枚の画像あたりの平均オブジェクト数
         self.mean_objets = mean_objets
         # 1 / fm_countに対する、prior boxの基準サイズの割合。[1.5, 0.5] なら横が1.5倍、縦が0.5倍のものを用意。
@@ -74,16 +81,18 @@ class ObjectDetector(object):
         # アスペクト比のリスト
         self.pb_aspect_ratios = np.sort(pb_size_patterns[:, 0] / pb_size_patterns[:, 1])
 
+        # shape=(box数, 4)で座標(アスペクト比などを適用する前のグリッド)
+        self.pb_grid = []
         # shape=(box数, 4)で座標
-        self.pb_locs = None
+        self.pb_locs = []
         # shape=(box数,)で、何種類目のprior boxか (集計用)
-        self.pb_info_indices = None
+        self.pb_info_indices = []
         # shape=(box数,2)でprior boxの中心の座標
-        self.pb_centers = None
+        self.pb_centers = []
         # shape=(box数,2)でprior boxのサイズ
-        self.pb_sizes = None
+        self.pb_sizes = []
         # 各prior boxの情報をdictで保持
-        self.pb_info = None
+        self.pb_info = []
 
         self._create_prior_boxes()
 
@@ -92,20 +101,15 @@ class ObjectDetector(object):
         assert self.pb_info_indices.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_info_indices.shape)
         assert self.pb_centers.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_centers.shape)
         assert self.pb_sizes.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_sizes.shape)
-        assert len(self.pb_info) == len(ObjectDetector.FM_COUNTS) * len(self.pb_size_patterns)
+        assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns)
 
     def _create_prior_boxes(self):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
-        self.pb_locs = []
-        self.pb_info_indices = []
-        self.pb_centers = []
-        self.pb_sizes = []
-        self.pb_info = []
-        for fm_count in ObjectDetector.FM_COUNTS:
+        for map_size in self.map_sizes:
             # 敷き詰める間隔
-            tile_size = 1.0 / fm_count
+            tile_size = 1.0 / map_size
             # 敷き詰めたときの中央の位置のリスト
-            lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, fm_count, dtype=np.float32)
+            lin = np.linspace(0.5 * tile_size, 1 - 0.5 * tile_size, map_size, dtype=np.float32)
             # 縦横に敷き詰め
             centers_x, centers_y = np.meshgrid(lin, lin)
             centers_x = centers_x.reshape(-1, 1)
@@ -113,7 +117,11 @@ class ObjectDetector(object):
             prior_boxes_center = np.concatenate((centers_x, centers_y), axis=1)
             # (x, y) → タイル×(x1, y1, x2, y2)
             prior_boxes_center = np.tile(prior_boxes_center, (1, 2))
-            assert prior_boxes_center.shape == (fm_count ** 2, 4)
+            assert prior_boxes_center.shape == (map_size ** 2, 4)
+            # グリッド
+            grid = np.copy(prior_boxes_center)
+            grid[:, :2] -= tile_size / 2
+            grid[:, 2:] += tile_size / 2 + (1 / np.array(self.image_size))
 
             for pb_pat in self.pb_size_patterns:
                 # prior boxのサイズの基準
@@ -121,24 +129,25 @@ class ObjectDetector(object):
                 # prior boxのサイズ
                 # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
                 prior_boxes = np.copy(prior_boxes_center)
-                prior_boxes[:, 0] -= pb_size[0] / 2
-                prior_boxes[:, 1] -= pb_size[1] / 2
-                prior_boxes[:, 2] += pb_size[0] / 2
-                prior_boxes[:, 3] += pb_size[1] / 2
+                prior_boxes = np.copy(prior_boxes_center)
+                prior_boxes[:, :2] -= pb_size / 2
+                prior_boxes[:, 2:] += pb_size / 2 + (1 / np.array(self.image_size))
                 # はみ出ているのはclipしておく
                 prior_boxes = np.clip(prior_boxes, 0, 1)
 
+                self.pb_grid.extend(grid)
                 self.pb_locs.extend(prior_boxes)
                 self.pb_centers.extend(prior_boxes_center[:, :2])
                 self.pb_sizes.extend([[pb_size[0], pb_size[1]]] * len(prior_boxes))
                 self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
                 self.pb_info.append({
-                    'fm_count': fm_count,
+                    'map_size': map_size,
                     'size': np.sqrt(pb_size.prod()),
                     'aspect_ratio': pb_size[0] / pb_size[1],
                     'count': len(prior_boxes),
                 })
 
+        self.pb_grid = np.array(self.pb_grid)
         self.pb_locs = np.array(self.pb_locs)
         self.pb_info_indices = np.array(self.pb_info_indices)
         self.pb_centers = np.array(self.pb_centers)
@@ -233,8 +242,8 @@ class ObjectDetector(object):
         logger.debug(cr)
         logger.debug('assigned counts:')
         for i, c in enumerate(assigned_counts):
-            logger.debug('  prior boxes{fm=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
-                         self.pb_info[i]['fm_count'],
+            logger.debug('  prior boxes{m=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
+                         self.pb_info[i]['map_size'],
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)

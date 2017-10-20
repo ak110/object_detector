@@ -9,17 +9,17 @@ _BASENET_TYPE = 'resnet50'
 def create_network(od):
     """モデルの作成。"""
     import keras
-    from model import ObjectDetector
+    import keras.backend as K
 
     # downsampling (ベースネットワーク)
-    x = inputs = keras.layers.Input(od.input_size + (3,))
-    x, ref, lr_multipliers = _create_basenet(x)
-    # center
-    x = _centerblock(x)
+    x = inputs = keras.layers.Input(od.image_size + (3,))
+    x, ref, lr_multipliers = _create_basenet(od, x)
     # upsampling
-    for fm_count in ObjectDetector.FM_COUNTS[::-1]:
-        x = _upblock(x, ref, fm_count)
-
+    ref['up{}'.format(K.int_shape(x)[1])] = x
+    while True:
+        x, map_size = _upblock(x, ref)
+        if od.map_sizes[0] <= map_size:
+            break
     # prediction module
     outputs = _create_pm(od, ref, lr_multipliers)
 
@@ -44,50 +44,51 @@ def get_preprocess_input():
         return tk.image.preprocess_input_abs1
 
 
-def _create_basenet(x):
+def _create_basenet(od, x):
     """ベースネットワークの作成。"""
     import keras
     import keras.backend as K
-    from model import ObjectDetector
 
-    ref = {}
+    ref_list = []
+
     lr_multipliers = {}
     if _BASENET_TYPE == 'custom':
         x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='elu', kernel_initializer='he_uniform', name='stage1_conv1')(x)  # 160x160
         x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv2')(x)
         x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
-        for fm_count in ObjectDetector.FM_COUNTS:
-            x = _downblock(x, ref, fm_count)
+        ref_list.append(x)
     elif _BASENET_TYPE == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [1 / 100] * len(w)))
-        ref['down{}'.format(40)] = basenet.get_layer(name='res4a_branch2a').input
-        ref['down{}'.format(20)] = basenet.get_layer(name='res5a_branch2a').input
-        ref['down{}'.format(10)] = basenet.get_layer(name='avg_pool').input
-        x = ref['down{}'.format(10)]
-        for fm_count in (5,):
-            x = _downblock(x, ref, fm_count)
+        ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
+        ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
+        ref_list.append(basenet.get_layer(name='avg_pool').input)
     elif _BASENET_TYPE == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [1 / 100] * len(w)))
-        ref['down{}'.format(40)] = basenet.get_layer(name='block4_sepconv1_act').input
-        ref['down{}'.format(20)] = basenet.get_layer(name='block13_sepconv1_act').input
-        ref['down{}'.format(10)] = basenet.get_layer(name='block14_sepconv2_act').output
-        x = ref['down{}'.format(10)]
-        for fm_count in (5,):
-            x = _downblock(x, ref, fm_count)
+        ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
+        ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
+        ref_list.append(basenet.get_layer(name='block14_sepconv2_act').output)
     else:
         assert False
 
-    for fm_count in ObjectDetector.FM_COUNTS:
-        assert 'down{}'.format(fm_count) in ref
-        x = ref['down{}'.format(fm_count)]
-        assert K.int_shape(x)[1] == fm_count
+    x = ref_list[-1]
+    while True:
+        x, map_size = _downblock(x)
+        ref_list.append(x)
+        if map_size <= 6 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
+            break
+
+    ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}
+
+    # 欲しいサイズがちゃんとあるかチェック
+    for map_size in od.map_sizes:
+        assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
 
     return x, ref, lr_multipliers
 
@@ -119,54 +120,47 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
     return x
 
 
-def _downblock(x, ref, fm_count):
+def _downblock(x):
     import keras
     import keras.backend as K
+
+    map_size = K.int_shape(x)[1] // 2
 
     if K.int_shape(x)[-1] > 256:
-        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='down{}_sq'.format(fm_count))(x)
+        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='down{}_sq'.format(map_size))(x)
     assert K.int_shape(x)[-1] == 256
 
-    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(fm_count))(x)
-    assert K.int_shape(x)[1] == fm_count
+    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(map_size))(x)
+    assert K.int_shape(x)[1] == map_size
 
-    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='down{}_block'.format(fm_count))
-
-    ref['down{}'.format(fm_count)] = x
-    return x
+    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='down{}_block'.format(map_size))
+    return x, map_size
 
 
-def _centerblock(x):
-    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='center_block')
-    return x
-
-
-def _upblock(x, ref, fm_count):
+def _upblock(x, ref):
     import keras
     import keras.backend as K
 
-    t = ref['down{}'.format(fm_count)]
+    map_size = K.int_shape(x)[1] * 2
 
-    if K.int_shape(x)[1] != fm_count:
-        x = keras.layers.UpSampling2D(name='up{}_us'.format(fm_count))(x)
-    assert K.int_shape(x)[1] == fm_count
+    x = keras.layers.UpSampling2D(name='up{}_us'.format(map_size))(x)
+    t = ref['down{}'.format(map_size)]
 
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(fm_count))(x)
-    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(fm_count))(t)
-    x = keras.layers.Add(name='up{}_mix'.format(fm_count))([x, t])
-    x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(fm_count))(x)
-    x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(fm_count))(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(fm_count))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(map_size))(x)
+    t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(map_size))(t)
+    x = keras.layers.Add(name='up{}_mix'.format(map_size))([x, t])
+    x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(map_size))(x)
+    x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(map_size))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(map_size))(x)
 
-    ref['up{}'.format(fm_count)] = x
-    return x
+    ref['up{}'.format(map_size)] = x
+    return x, map_size
 
 
 def _create_pm(od, ref, lr_multipliers):
     """Prediction module."""
     import keras
     from keras.regularizers import l2
-    from model import ObjectDetector
 
     # スケール間で重みを共有するレイヤー
     shared_layers = {}
@@ -195,30 +189,13 @@ def _create_pm(od, ref, lr_multipliers):
                                        name=prefix + '_iou'),
         }
 
-    def _pm(x, prefix, shlayers):
-        # squeeze
-        x = shlayers['sq'](x)
-        # DenseBlock
-        for branch in range(4):
-            b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
-            b = shlayers['c' + str(branch)](b)
-            x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
-        # conf/loc/iou
-        conf = shlayers['conf'](x)
-        loc = shlayers['loc'](x)
-        iou = shlayers['iou'](keras.layers.Concatenate()([x, conf, loc]))
-        # reshape
-        conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
-        loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
-        iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
-        return conf, loc, iou
-
     confs, locs, ious = [], [], []
-    for fm_count in ObjectDetector.FM_COUNTS:
-        x = ref['up{}'.format(fm_count)]
+    for map_size in od.map_sizes:
+        assert 'up{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
+        x = ref['up{}'.format(map_size)]
         for pat_ix in range(len(od.pb_size_patterns)):
-            prefix = 'pm{}-{}'.format(fm_count, pat_ix)
-            conf, loc, iou = _pm(x, prefix, shared_layers[pat_ix])
+            prefix = 'pm{}-{}'.format(map_size, pat_ix)
+            conf, loc, iou = _pm(od, x, prefix, shared_layers[pat_ix])
             confs.append(conf)
             locs.append(loc)
             ious.append(iou)
@@ -230,12 +207,33 @@ def _create_pm(od, ref, lr_multipliers):
     outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
 
     # 学習率の調整
-    m = [1 / len(ObjectDetector.FM_COUNTS)]
+    m = [1 / len(od.map_sizes)]
     for shlayers in shared_layers.values():
         for layer in shlayers.values():
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, m * len(w)))
     return outputs
+
+
+def _pm(od, x, prefix, shlayers):
+    import keras
+    # squeeze
+    x = shlayers['sq'](x)
+    # DenseBlock
+    for branch in range(4):
+        b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
+        b = shlayers['c' + str(branch)](b)
+        x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
+    # conf/loc/iou
+    conf = shlayers['conf'](x)
+    loc = shlayers['loc'](x)
+    mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
+    iou = shlayers['iou'](mix)
+    # reshape
+    conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
+    loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
+    iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
+    return conf, loc, iou
 
 
 def create_predict_network(od, model):
