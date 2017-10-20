@@ -313,9 +313,9 @@ class ObjectDetector(object):
         sorted_indices = np.prod(bboxes[:, 2:] - bboxes[:, :2], axis=-1).argsort()[::-1]
 
         for gt_ix, bbox in zip(sorted_indices, bboxes[sorted_indices]):
-            # bboxの重心が含まれるprior boxにのみ割り当てる。
+            # bboxの重心が含まれるgridにのみ割り当てる。
             bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
-            pb_center_mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
+            pb_center_mask = np.logical_and(self.pb_grid[:, :2] <= bb_center, bb_center < self.pb_grid[:, 2:]).all(axis=-1)
             assert pb_center_mask.any(), 'Encode error: {}'.format(bb_center)
             # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
             iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
