@@ -34,6 +34,7 @@ def _main():
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320 or 512', default=320, type=int)
     parser.add_argument('--map-size', help='prior boxの一辺の数。', default=40, type=int)
+    parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
@@ -101,10 +102,9 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         #   (cf. https://www.slideshare.net/JiroNishitoba/20170629)
         # ・lossが分類＋回帰×4＋回帰なので、とりあえず1 / 3倍にしてみる。(怪)
         # epoch数：
-        # ・指定値 // 7 * 4 + 指定値 // 7 * 2 + 指定値 // 7。
-        base_epoch = args.epochs // 7
+        # ・指定値 // 2 + 指定値 // 4 + 指定値 // 4。
         base_lr = 1e-1 / 3 * np.sqrt(batch_size) / np.sqrt(128)
-        lr_list = [base_lr] * (base_epoch * 4) + [base_lr / 10] * (base_epoch * 2) + [base_lr / 100] * base_epoch
+        lr_list = [base_lr] * (args.epochs // 2) + [base_lr / 10] * (args.epochs // 4) + [base_lr / 100] * (args.epochs // 4)
         epochs = len(lr_list)
 
         callbacks = []
@@ -113,7 +113,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
         callbacks.append(keras.callbacks.LambdaCallback(
             on_epoch_end=lambda epoch, logs: evaluate_callback(
-                logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
+                logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir)
         ))
 
         model.fit_generator(
