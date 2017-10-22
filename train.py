@@ -35,7 +35,7 @@ def _main():
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320 or 512', default=320, type=int)
     parser.add_argument('--map-size', help='prior boxの一辺の数。', default=40, type=int)
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
-    parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
     args = parser.parse_args()
 
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))

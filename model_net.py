@@ -2,7 +2,7 @@
 
 import pytoolkit as tk
 
-# ベースネットワークの種類: custom, resnet50, xception
+# ベースネットワークの種類: custom, vgg16, resnet50, xception
 _BASENET_TYPE = 'resnet50'
 
 
@@ -26,18 +26,9 @@ def create_network(od):
     return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
 
 
-def get_input_size():
-    """入力画像サイズ。"""
-    if _BASENET_TYPE == 'custom':
-        return (325, 325)
-    else:
-        assert _BASENET_TYPE in ('resnet50', 'xception')
-        return (319, 319)
-
-
 def get_preprocess_input():
     """`preprocess_input`を返す。"""
-    if _BASENET_TYPE == 'resnet50':
+    if _BASENET_TYPE in ('vgg16', 'resnet50'):
         return tk.image.preprocess_input_mean
     else:
         assert _BASENET_TYPE in ('custom', 'xception')
@@ -53,11 +44,18 @@ def _create_basenet(od, x):
 
     lr_multipliers = {}
     if _BASENET_TYPE == 'custom':
-        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='valid', activation='elu', kernel_initializer='he_uniform', name='stage1_conv1')(x)  # 160x160
-        x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv2')(x)
-        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
+        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)  # 160x160
+        x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
+        x = tk.dl.conv2d(64, (3, 3), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         ref_list.append(x)
+    elif _BASENET_TYPE == 'vgg16':
+        basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
+        for layer in basenet.layers:
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, [1 / 100] * len(w)))
+        ref_list.append(basenet.get_layer(name='block4_pool').input)
+        ref_list.append(basenet.get_layer(name='block5_pool').input)
     elif _BASENET_TYPE == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         for layer in basenet.layers:
@@ -78,6 +76,13 @@ def _create_basenet(od, x):
         assert False
 
     x = ref_list[-1]
+
+    if K.int_shape(x)[-1] > 256:
+        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='tail_sq')(x)
+    assert K.int_shape(x)[-1] == 256
+    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='tail_block')
+
+    # downsampling
     while True:
         x, map_size = _downblock(x)
         ref_list.append(x)
@@ -121,16 +126,12 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
 
 
 def _downblock(x):
-    import keras
     import keras.backend as K
 
     map_size = K.int_shape(x)[1] // 2
 
-    if K.int_shape(x)[-1] > 256:
-        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='down{}_sq'.format(map_size))(x)
-    assert K.int_shape(x)[-1] == 256
-
-    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(map_size))(x)
+    x = tk.dl.conv2d(256, (3, 3), strides=(2, 2), padding='same', activation=None,
+                     kernel_initializer='he_uniform', name='down{}_ds'.format(map_size))(x)
     assert K.int_shape(x)[1] == map_size
 
     x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='down{}_block'.format(map_size))
