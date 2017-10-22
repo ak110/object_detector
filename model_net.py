@@ -253,6 +253,6 @@ def create_predict_network(od, model):
 
     objclasses = keras.layers.Lambda(lambda c: K.argmax(c[:, :, 1:], axis=-1) + 1, K.int_shape(confs)[1:-1])(confs)
     objconfs = keras.layers.Lambda(lambda x: K.max(x[0][:, :, 1:], axis=-1) * x[1][:, :, 0], K.int_shape(confs)[1:-1])([confs, ious])
-    locs = keras.layers.Lambda(lambda l: od.decode_locs(l, K), K.int_shape(locs))(locs)
+    locs = keras.layers.Lambda(lambda l: od.decode_locs(l, K), K.int_shape(locs)[1:])(locs)
 
     return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])

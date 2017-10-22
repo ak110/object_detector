@@ -83,13 +83,8 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             logger.debug('warm start: %s', model_path.name)
 
         # マルチGPU対応
-        gpu_count = tk.get_gpu_count()
-        logger.debug('gpu count = %d', gpu_count)
-        if gpu_count <= 1:
-            batch_size = args.batch_size
-        else:
-            model = tk.dl.create_data_parallel_model(model, gpu_count)
-            batch_size = args.batch_size * gpu_count
+        logger.debug('gpu count = %d', tk.get_gpu_count())
+        model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
         model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 

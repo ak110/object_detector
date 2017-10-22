@@ -14,8 +14,6 @@ from evaluation import evaluate
 from generator import Generator
 from voc_data import load_data
 
-_BATCH_SIZE = 16
-
 
 def _main():
     import matplotlib as mpl
@@ -28,6 +26,7 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
@@ -44,7 +43,7 @@ def _main():
 
 def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     # データの読み込み
-    (X_train, _), (X_test, y_test) = load_data(data_dir, args.debug, _BATCH_SIZE)
+    (X_train, _), (X_test, y_test) = load_data(data_dir, args.debug, args.batch_size)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     import keras.backend as K
@@ -55,9 +54,13 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         model, _ = od.create_network()
         model.load_weights(str(result_dir.joinpath('model.best.h5')), by_name=True)
 
+        # マルチGPU対応
+        logger.debug('gpu count = %d', tk.get_gpu_count())
+        model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
+
         # 評価
         gen = Generator(image_size=od.image_size, od=od)
-        evaluate(logger, od, model, gen, X_test, y_test, _BATCH_SIZE, -1, result_dir)
+        evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, result_dir)
 
 
 if __name__ == '__main__':
