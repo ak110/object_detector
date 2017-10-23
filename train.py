@@ -33,7 +33,7 @@ def _main():
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320 or 512', default=320, type=int)
-    parser.add_argument('--map-size', help='prior boxの一辺の数。', default=40, type=int)
+    parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
     args = parser.parse_args()
@@ -56,7 +56,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    od = ObjectDetector.create(args.input_size, args.map_size, len(CLASS_NAMES), y_train)
+    od = ObjectDetector.create(args.input_size, args.map_sizes, len(CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))

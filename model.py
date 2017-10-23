@@ -19,20 +19,13 @@ class ObjectDetector(object):
     """
 
     @classmethod
-    def create(cls, input_size, map_size, nb_classes, y_train, pb_size_pattern_count=8):
+    def create(cls, input_size, map_sizes, nb_classes, y_train, pb_size_pattern_count=8):
         """訓練データからパラメータを適当に決めてインスタンスを作成する。
 
         gridに配置したときのIOUを直接最適化するのは難しそうなので、
         とりあえず大雑把にKMeansでクラスタ化したりなど。
         """
-        # feature mapのサイズのリスト。
-        map_sizes = []
-        for i in range(4):  # 最大4つ
-            ms = map_size // (2 ** i)
-            map_sizes.append(ms)
-            if ms <= 6 or ms % 2 != 0:  # 充分小さくなるか奇数になったら終了
-                break
-        map_sizes = np.array(map_sizes)
+        map_sizes = np.array(sorted(map_sizes)[::-1])
 
         # 平均オブジェクト数
         mean_objets = np.mean([len(y.bboxes) for y in y_train])
@@ -44,17 +37,14 @@ class ObjectDetector(object):
         # bb_base_sizes = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
+        assert (bb_base_sizes >= 0).all()  # 手抜き用
+        assert (bb_base_sizes < 1).all()  # 手抜き用
         tile_sizes = 1 / map_sizes
         bboxes_size_patterns = []
-        for tile_size in tile_sizes:
-            if tile_size == tile_sizes.min():
-                mask = bb_base_sizes < tile_size * 2
-            elif tile_size == tile_sizes.max():
-                mask = bb_base_sizes >= tile_size
-            else:
-                mask = np.logical_and(
-                    bb_base_sizes >= tile_size,
-                    bb_base_sizes < tile_size * 2)
+        for ti, tile_size in enumerate(tile_sizes):
+            min_tile_size = 0 if tile_size == tile_sizes.min() else tile_size
+            max_tile_size = 1 if tile_size == tile_sizes.max() else tile_sizes[ti + 1]
+            mask = np.logical_and(bb_base_sizes >= min_tile_size, bb_base_sizes < max_tile_size)
             bboxes_size_patterns.append(bboxes_sizes[mask] / tile_size)
         bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
         assert len(bboxes_size_patterns.shape) == 2
@@ -195,47 +185,51 @@ class ObjectDetector(object):
         unrec_ars = []  # iou < 0.5のアスペクト比
         rec_delta_locs = []  # Δlocs
 
+        total_gt_boxes = sum([np.sum(np.logical_not(y.difficults)) for y in y_test])
+
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
             # 割り当ててみる
             assigned_indices = self._assign_boxes(y.bboxes)
             assigned_indices = list(assigned_indices)
             assigned_pb_list, assigned_gt_list, assigned_iou_list = zip(*assigned_indices)
+            assigned_pb_list = np.array(assigned_pb_list)
             assigned_gt_list = np.array(assigned_gt_list)
             assigned_iou_list = np.array(assigned_iou_list)
 
-            # 割り当てられなかった回数
-            errors = sum([gt_ix not in assigned_gt_list for gt_ix in range(len(y.bboxes))])
-            total_errors += errors
-            # prior box毎の、割り当てられた回数
-            for pb_ix in assigned_pb_list:
-                assigned_counts[self.pb_info_indices[pb_ix]] += 1
             # 初期の座標のずれ具合の集計
             for assigned_pb, assigned_gt, _ in assigned_indices:
                 rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
-            # オブジェクトごとの最大IoUと再現率を集める
-            for gt_ix, class_id in enumerate(y.classes):
+            # オブジェクトごとの集計
+            for gt_ix, (class_id, difficult) in enumerate(zip(y.classes, y.difficults)):
                 assert 1 <= class_id < self.nb_classes
-                gt_iou = assigned_iou_list[assigned_gt_list == gt_ix]
-                max_iou = gt_iou.max() if gt_iou.any() else 0
+                if difficult:
+                    continue
+                gt_mask = assigned_gt_list == gt_ix
+                if gt_mask.any():
+                    gt_iou = assigned_iou_list[gt_mask]
+                    gt_pb = assigned_pb_list[gt_mask]
+                    max_iou = gt_iou.max()
+                    pb_ix = gt_pb[gt_iou.argmax()]
+                    # prior box毎の、割り当てられた回数
+                    assigned_counts[self.pb_info_indices[pb_ix]] += 1
+                else:
+                    max_iou = 0
+                    # 割り当て失敗
+                    total_errors += 1
                 # 最大IoU
                 iou_list.append(max_iou)
                 # 再現率
                 y_true.append(class_id)
                 y_pred.append(class_id if max_iou >= 0.5 else 0)  # IOUが0.5以上のboxが存在すれば一致扱いとする
-            # iou < 0.5しか無いboxの情報を集める
-            for gt_ix, bbox in enumerate(y.bboxes):
-                if (assigned_iou_list[assigned_gt_list == gt_ix] >= 0.5).any():
-                    continue  # iou >= 0.5で割り当たっていたらスキップ
-                w = bbox[2] - bbox[0]
-                h = bbox[3] - bbox[1]
-                unrec_widths.append(w)
-                unrec_heights.append(h)
-                unrec_ars.append(w / h)
-
-        # 集計
+                # iou < 0.5しか無いboxの情報を集める
+                if max_iou < 0.5:
+                    bbox = y.bboxes[gt_ix]
+                    wh = bbox[2:] - bbox[:2]
+                    unrec_widths.append(wh[1])
+                    unrec_heights.append(wh[0])
+                    unrec_ars.append(wh[0] / wh[1])
         y_true.append(0)  # 警告よけにbgも1個入れておく
         y_pred.append(0)  # 警告よけにbgも1個入れておく
-        total_gt_boxes = sum([len(y.bboxes) for y in y_test])
         cr = sklearn.metrics.classification_report(y_true, y_pred, target_names=class_names)
 
         # ログ出力
