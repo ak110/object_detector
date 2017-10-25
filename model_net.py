@@ -14,12 +14,15 @@ def create_network(od):
     # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(od.image_size + (3,))
     x, ref, lr_multipliers = _create_basenet(od, x)
+    # center
+    map_size = K.int_shape(x)[1]
+    x = _centerblock(x, ref, map_size)
     # upsampling
-    ref['up{}'.format(K.int_shape(x)[1])] = x
     while True:
-        x, map_size = _upblock(x, ref)
+        x = _upblock(x, ref, map_size)
         if od.map_sizes[0] <= map_size:
             break
+        map_size *= 2
     # prediction module
     outputs = _create_pm(od, ref, lr_multipliers)
 
@@ -138,13 +141,22 @@ def _downblock(x):
     return x, map_size
 
 
-def _upblock(x, ref):
+def _centerblock(x, ref, map_size):
+    import keras
+    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='center_block')
+    x = keras.layers.AveragePooling2D((map_size, map_size))(x)
+    ref['out{}'.format(1)] = x
+    return x
+
+
+def _upblock(x, ref, map_size):
     import keras
     import keras.backend as K
 
-    map_size = K.int_shape(x)[1] * 2
+    in_map_size = K.int_shape(x)[1]
+    up_size = map_size // in_map_size
 
-    x = keras.layers.UpSampling2D(name='up{}_us'.format(map_size))(x)
+    x = keras.layers.UpSampling2D((up_size, up_size), name='up{}_us'.format(map_size))(x)
     t = ref['down{}'.format(map_size)]
 
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(map_size))(x)
@@ -154,16 +166,52 @@ def _upblock(x, ref):
     x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(map_size))(x)
     x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(map_size))(x)
 
-    ref['up{}'.format(map_size)] = x
-    return x, map_size
+    ref['out{}'.format(map_size)] = x
+    return x
 
 
 def _create_pm(od, ref, lr_multipliers):
     """Prediction module."""
     import keras
-    from keras.regularizers import l2
 
     # スケール間で重みを共有するレイヤー
+    shared_layers = _pm_create_shared_layers(od)
+
+    confs, locs, ious = [], [], []
+    for map_size in od.map_sizes:
+        assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
+        x = ref['out{}'.format(map_size)]
+        for pat_ix in range(len(od.pb_size_patterns)):
+            prefix = 'pm{}-{}'.format(map_size, pat_ix)
+            conf, loc, iou = _pm(od, x, prefix, shared_layers[pat_ix])
+            confs.append(conf)
+            locs.append(loc)
+            ious.append(iou)
+    for pat_ix in range(len(od.pb_center_size_patterns)):
+        prefix = 'pm{}-{}'.format(1, pat_ix)
+        conf, loc, iou = _pm_center(od, ref['out{}'.format(1)], prefix)
+        confs.append(conf)
+        locs.append(loc)
+        ious.append(iou)
+    confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
+    locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
+    ious = keras.layers.Concatenate(axis=-2, name='output_ious')(ious)
+
+    # いったんくっつける (損失関数の中で分割して使う)
+    outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
+
+    # 学習率の調整
+    m = [1 / len(od.map_sizes)]
+    for shlayers in shared_layers.values():
+        for layer in shlayers.values():
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, m * len(w)))
+    return outputs
+
+
+def _pm_create_shared_layers(od):
+    import keras
+    from keras.regularizers import l2
     shared_layers = {}
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
@@ -189,31 +237,7 @@ def _create_pm(od, ref, lr_multipliers):
                                        activation='sigmoid',
                                        name=prefix + '_iou'),
         }
-
-    confs, locs, ious = [], [], []
-    for map_size in od.map_sizes:
-        assert 'up{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
-        x = ref['up{}'.format(map_size)]
-        for pat_ix in range(len(od.pb_size_patterns)):
-            prefix = 'pm{}-{}'.format(map_size, pat_ix)
-            conf, loc, iou = _pm(od, x, prefix, shared_layers[pat_ix])
-            confs.append(conf)
-            locs.append(loc)
-            ious.append(iou)
-    confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
-    locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
-    ious = keras.layers.Concatenate(axis=-2, name='output_ious')(ious)
-
-    # いったんくっつける (損失関数の中で分割して使う)
-    outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
-
-    # 学習率の調整
-    m = [1 / len(od.map_sizes)]
-    for shlayers in shared_layers.values():
-        for layer in shlayers.values():
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, m * len(w)))
-    return outputs
+    return shared_layers
 
 
 def _pm(od, x, prefix, shlayers):
@@ -234,6 +258,32 @@ def _pm(od, x, prefix, shlayers):
     conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
     loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
     iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
+    return conf, loc, iou
+
+
+def _pm_center(od, x, prefix):
+    import keras
+    from keras.regularizers import l2
+    x = keras.layers.Flatten()(x)
+    conf = keras.layers.Dense(od.nb_classes,
+                              kernel_initializer='zeros',
+                              kernel_regularizer=l2(1e-4),
+                              bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
+                              activation='softmax',
+                              name=prefix + '_conf')(x)
+    loc = keras.layers.Dense(4, use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+                             kernel_initializer='zeros',
+                             kernel_regularizer=l2(1e-4),
+                             name=prefix + '_loc')(x)
+    mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
+    iou = keras.layers.Dense(1,
+                             kernel_initializer='zeros',
+                             kernel_regularizer=l2(1e-4),
+                             activation='sigmoid',
+                             name=prefix + '_iou')(mix)
+    conf = keras.layers.Reshape((1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
+    loc = keras.layers.Reshape((1, 4), name=prefix + '_reshape_loc')(loc)
+    iou = keras.layers.Reshape((1, 1), name=prefix + '_reshape_iou')(iou)
     return conf, loc, iou
 
 

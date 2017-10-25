@@ -34,7 +34,7 @@ class ObjectDetector(object):
         bboxes = np.concatenate([y.bboxes for y in y_train])
         bboxes_sizes = bboxes[:, 2:] - bboxes[:, :2]
         bb_base_sizes = bboxes_sizes.min(axis=-1)  # 短辺のサイズのリスト
-        # bb_base_sizes = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
+        bb_base_areas = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         assert (bb_base_sizes >= 0).all()  # 手抜き用
@@ -45,14 +45,15 @@ class ObjectDetector(object):
             min_tile_size = 0 if tile_size == tile_sizes.min() else tile_size
             max_tile_size = 1 if tile_size == tile_sizes.max() else tile_sizes[ti + 1]
             mask = np.logical_and(bb_base_sizes >= min_tile_size, bb_base_sizes < max_tile_size)
+            mask = np.logical_and(mask, bb_base_areas < 0.8)  # 0.8以上のものは中央専用のprior boxを使用
             bboxes_size_patterns.append(bboxes_sizes[mask] / tile_size)
         bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
         assert len(bboxes_size_patterns.shape) == 2
         assert bboxes_size_patterns.shape[1] == 2
 
-        # リストアップしたものをクラスタリング。(YOLOv2のDimension Clusters)。
-        cluster = tk.ml.cluster_by_iou(bboxes_size_patterns, n_clusters=pb_size_pattern_count, n_jobs=-1)
-        pb_size_patterns = cluster.cluster_centers_
+        # リストアップしたものをクラスタリング。(YOLOv2のDimension Clustersのようなもの)。
+        cluster = sklearn.cluster.KMeans(n_clusters=pb_size_pattern_count, n_jobs=-1)
+        pb_size_patterns = cluster.fit(bboxes_size_patterns).cluster_centers_
         assert pb_size_patterns.shape == (pb_size_pattern_count, 2)
 
         return cls(input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns)
@@ -66,6 +67,8 @@ class ObjectDetector(object):
         # 1 / fm_countに対する、prior boxの基準サイズの割合。[1.5, 0.5] なら横が1.5倍、縦が0.5倍のものを用意。
         # 面積昇順に並べ替えておく。
         self.pb_size_patterns = pb_size_patterns[pb_size_patterns.prod(axis=-1).argsort(), :].astype(np.float32)
+        # 画像全体用のprior boxのサイズのリスト
+        self.pb_center_size_patterns = np.array([[0.8, 0.8], [0.8, 1.0], [1.0, 0.8], [1.0, 1.0]])
         # 1 / fm_countに対する、prior boxの基準サイズの割合。(縦横の相乗平均)
         self.pb_size_ratios = np.sort(np.sqrt(pb_size_patterns[:, 0] * pb_size_patterns[:, 1]))
         # アスペクト比のリスト
@@ -84,18 +87,24 @@ class ObjectDetector(object):
         # 各prior boxの情報をdictで保持
         self.pb_info = []
 
-        self._create_prior_boxes()
+        self._add_prior_boxes(self.map_sizes, self.pb_size_patterns)
+        self._add_prior_boxes([1], self.pb_center_size_patterns)
+        self.pb_grid = np.array(self.pb_grid)
+        self.pb_locs = np.array(self.pb_locs)
+        self.pb_info_indices = np.array(self.pb_info_indices)
+        self.pb_centers = np.array(self.pb_centers)
+        self.pb_sizes = np.array(self.pb_sizes)
 
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4), 'shape error: {}'.format(self.pb_locs.shape)
         assert self.pb_info_indices.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_info_indices.shape)
         assert self.pb_centers.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_centers.shape)
         assert self.pb_sizes.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_sizes.shape)
-        assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns)
+        assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns) + len(self.pb_center_size_patterns)
 
-    def _create_prior_boxes(self):
+    def _add_prior_boxes(self, map_sizes, pb_size_patterns):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
-        for map_size in self.map_sizes:
+        for map_size in map_sizes:
             # 敷き詰める間隔
             tile_size = 1.0 / map_size
             # 敷き詰めたときの中央の位置のリスト
@@ -113,7 +122,7 @@ class ObjectDetector(object):
             grid[:, :2] -= tile_size / 2
             grid[:, 2:] += tile_size / 2 + (1 / np.array(self.image_size))
 
-            for pb_pat in self.pb_size_patterns:
+            for pb_pat in pb_size_patterns:
                 # prior boxのサイズの基準
                 pb_size = tile_size * pb_pat
                 # prior boxのサイズ
@@ -136,12 +145,6 @@ class ObjectDetector(object):
                     'aspect_ratio': pb_size[0] / pb_size[1],
                     'count': len(prior_boxes),
                 })
-
-        self.pb_grid = np.array(self.pb_grid)
-        self.pb_locs = np.array(self.pb_locs)
-        self.pb_info_indices = np.array(self.pb_info_indices)
-        self.pb_centers = np.array(self.pb_centers)
-        self.pb_sizes = np.array(self.pb_sizes)
 
     def encode_locs(self, bboxes, bb_ix, pb_ix):
         """座標を学習用に変換。"""
