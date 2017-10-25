@@ -95,11 +95,20 @@ class ObjectDetector(object):
         self.pb_centers = np.array(self.pb_centers)
         self.pb_sizes = np.array(self.pb_sizes)
 
+        # prior boxの重心はpb_gridの中心であるはず
+        ct = np.mean([self.pb_locs[:, 2:], self.pb_locs[:, :2]], axis=0)
+        assert np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all()
+        # 重心がずれるほどはみ出ているprior boxは使用しないようにする
+        clipped = np.clip(self.pb_locs, 0, 1)
+        ct = np.mean([clipped[:, 2:], clipped[:, :2]], axis=0)
+        self.pb_mask = np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all(axis=-1)
+
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4), 'shape error: {}'.format(self.pb_locs.shape)
         assert self.pb_info_indices.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_info_indices.shape)
         assert self.pb_centers.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_centers.shape)
         assert self.pb_sizes.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_sizes.shape)
+        assert self.pb_mask.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_mask.shape)
         assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns) + len(self.pb_center_size_patterns)
 
     def _add_prior_boxes(self, map_sizes, pb_size_patterns):
@@ -128,16 +137,13 @@ class ObjectDetector(object):
                 # prior boxのサイズ
                 # (x1, y1, x2, y2)の位置を調整。縦横半分ずつ動かす。
                 prior_boxes = np.copy(prior_boxes_center)
-                prior_boxes = np.copy(prior_boxes_center)
                 prior_boxes[:, :2] -= pb_size / 2
                 prior_boxes[:, 2:] += pb_size / 2 + (1 / np.array(self.image_size))
-                # はみ出ているのはclipしておく
-                prior_boxes = np.clip(prior_boxes, 0, 1)
 
                 self.pb_grid.extend(grid)
                 self.pb_locs.extend(prior_boxes)
                 self.pb_centers.extend(prior_boxes_center[:, :2])
-                self.pb_sizes.extend([[pb_size[0], pb_size[1]]] * len(prior_boxes))
+                self.pb_sizes.extend([pb_size] * len(prior_boxes))
                 self.pb_info_indices.extend([len(self.pb_info)] * len(prior_boxes))
                 self.pb_info.append({
                     'map_size': map_size,
@@ -313,6 +319,7 @@ class ObjectDetector(object):
             # bboxの重心が含まれるgridにのみ割り当てる。
             bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
             pb_center_mask = np.logical_and(self.pb_grid[:, :2] <= bb_center, bb_center < self.pb_grid[:, 2:]).all(axis=-1)
+            pb_center_mask = np.logical_and(pb_center_mask, self.pb_mask)
             assert pb_center_mask.any(), 'Encode error: {}'.format(bb_center)
             # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
             iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
@@ -329,6 +336,8 @@ class ObjectDetector(object):
                 assigned_gt[pb_mask] = gt_ix
                 assigned_iou[pb_mask] = iou[iou_mask]
                 assignable[pb_mask] = False  # 上書き禁止！
+
+        assert not np.logical_and(assigned_gt >= 0, np.logical_not(self.pb_mask)).any(), '無効なprior boxへの割り当て'
 
         pb_indices = np.where(assigned_gt >= 0)[0]
         assert len(pb_indices) >= 1  # 1個以上は必ず割り当てないと損失関数などが面倒になる
@@ -424,15 +433,14 @@ class ObjectDetector(object):
         """各種metricをまとめて返す。"""
         return [self.loss_conf, self.loss_loc, self.loss_iou, self.acc_bg, self.acc_obj]
 
-    @staticmethod
-    def loss_conf(y_true, y_pred):
+    def loss_conf(self, y_true, y_pred):
         """クラス分類の損失項。(metrics用)"""
         import keras.backend as K
         gt_confs = y_true[:, :, :-4]
         pred_confs = y_pred[:, :, :-5]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
-        return ObjectDetector._loss_conf(gt_confs, pred_confs, obj_count)
+        return self._loss_conf(gt_confs, pred_confs, obj_count)
 
     @staticmethod
     def loss_loc(y_true, y_pred):
@@ -453,15 +461,16 @@ class ObjectDetector(object):
         obj_count = K.sum(obj_mask, axis=-1)
         return self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
 
-    @staticmethod
-    def _loss_conf(gt_confs, pred_confs, obj_count):
+    def _loss_conf(self, gt_confs, pred_confs, obj_count):
         """分類のloss。"""
         import keras.backend as K
         if True:
             loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs)
+            loss *= np.expand_dims(self.pb_mask, axis=0)
             loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
         else:
             loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.75)
+            loss *= np.expand_dims(self.pb_mask, axis=0)
             loss = K.mean(loss, axis=-1)
         return loss
 

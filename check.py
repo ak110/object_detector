@@ -50,8 +50,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
     # 試しに回答を出力してみる。
     plot_truth(X_test[:_BATCH_SIZE], y_test[:_BATCH_SIZE], result_dir.joinpath('___ground_truth'))
-    # for i, y in enumerate(y_test[:3]):
-    #     logger.debug('y_test[%d]: %s', i, str(y))
 
     # 訓練データからパラメータを適当に決める。
     od = ObjectDetector.create(args.input_size, args.map_sizes, len(CLASS_NAMES), y_train)
@@ -59,7 +57,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.debug('prior box count = %d', len(od.pb_locs))
+    logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
     # prior boxのカバー度合いのチェック
     od.check_prior_boxes(logger, result_dir, y_test, CLASS_NAMES)

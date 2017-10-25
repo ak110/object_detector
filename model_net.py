@@ -1,4 +1,5 @@
 """ObjectDetectionのモデル。"""
+import numpy as np
 
 import pytoolkit as tk
 
@@ -302,8 +303,19 @@ def create_predict_network(od, model):
         locs = keras.layers.Lambda(lambda c: c[:, :, -5:-1], K.int_shape(output)[1:-1] + (4,))(output)
         ious = keras.layers.Lambda(lambda c: c[:, :, -1:], K.int_shape(output)[1:-1] + (1,))(output)
 
-    objclasses = keras.layers.Lambda(lambda c: K.argmax(c[:, :, 1:], axis=-1) + 1, K.int_shape(confs)[1:-1])(confs)
-    objconfs = keras.layers.Lambda(lambda x: K.max(x[0][:, :, 1:], axis=-1) * x[1][:, :, 0], K.int_shape(confs)[1:-1])([confs, ious])
-    locs = keras.layers.Lambda(lambda l: od.decode_locs(l, K), K.int_shape(locs)[1:])(locs)
+    def _class(confs):
+        return K.argmax(confs[:, :, 1:], axis=-1) + 1
+
+    def _conf(x):
+        confs = K.max(x[0][:, :, 1:], axis=-1)
+        ious = x[1][:, :, 0]
+        return K.sqrt(confs * ious) * np.expand_dims(od.pb_mask, axis=0)
+
+    def _locs(locs):
+        return od.decode_locs(locs, K)
+
+    objclasses = keras.layers.Lambda(_class, K.int_shape(confs)[1:-1])(confs)
+    objconfs = keras.layers.Lambda(_conf, K.int_shape(confs)[1:-1])([confs, ious])
+    locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
 
     return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])

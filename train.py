@@ -61,7 +61,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.debug('prior box count = %d', len(od.pb_locs))
+    logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
     sklearn.externals.joblib.dump(od, str(result_dir.joinpath('model.pkl')))
 
