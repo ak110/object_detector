@@ -98,10 +98,8 @@ class ObjectDetector(object):
         # prior boxの重心はpb_gridの中心であるはず
         ct = np.mean([self.pb_locs[:, 2:], self.pb_locs[:, :2]], axis=0)
         assert np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all()
-        # 重心がずれるほどはみ出ているprior boxは使用しないようにする
-        clipped = np.clip(self.pb_locs, 0, 1)
-        ct = np.mean([clipped[:, 2:], clipped[:, :2]], axis=0)
-        self.pb_mask = np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all(axis=-1)
+        # はみ出ているprior boxは使用しないようにする
+        self.pb_mask = np.logical_and(self.pb_grid >= 0, self.pb_grid <= 1 + (1 / self.image_size[0])).all(axis=-1)
 
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4), 'shape error: {}'.format(self.pb_locs.shape)
