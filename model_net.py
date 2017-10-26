@@ -7,6 +7,15 @@ import pytoolkit as tk
 _BASENET_TYPE = 'resnet50'
 
 
+def swish(x):
+    """Swish: a Self-Gated Activation Function
+
+    https://arxiv.org/abs/1710.05941
+    """
+    import keras.backend as K
+    return x * K.sigmoid(x)
+
+
 def create_network(od):
     """モデルの作成。"""
     import keras
@@ -48,9 +57,9 @@ def _create_basenet(od, x):
 
     lr_multipliers = {}
     if _BASENET_TYPE == 'custom':
-        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)  # 160x160
-        x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
-        x = tk.dl.conv2d(64, (3, 3), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_ds')(x)  # 80x80
+        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation=swish, kernel_initializer='he_uniform', name='stage0_ds')(x)  # 160x160
+        x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation=swish, kernel_initializer='he_uniform', name='stage1_conv')(x)
+        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         ref_list.append(x)
     elif _BASENET_TYPE == 'vgg16':
@@ -82,7 +91,7 @@ def _create_basenet(od, x):
     x = ref_list[-1]
 
     if K.int_shape(x)[-1] > 256:
-        x = tk.dl.conv2d(256, (1, 1), activation='elu', kernel_initializer='he_uniform', name='tail_sq')(x)
+        x = tk.dl.conv2d(256, (1, 1), activation=swish, kernel_initializer='he_uniform', name='tail_sq')(x)
     assert K.int_shape(x)[-1] == 256
     x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='tail_block')
 
@@ -108,34 +117,34 @@ def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
 
     for branch in range(branches):
         if bottleneck:
-            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu',
+            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation=swish,
                              kernel_initializer='he_uniform',
                              name=name + '_b' + str(branch) + '_c1')(x)
             b = keras.layers.Dropout(0.25)(b)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation=swish,
                              kernel_initializer='he_uniform',
                              name=name + '_b' + str(branch) + '_c2')(b)
         else:
             b = keras.layers.Dropout(0.25)(x)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
+            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation=swish,
                              kernel_initializer='he_uniform',
                              name=name + '_b' + str(branch))(b)
         x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_cat')([x, b])
 
     if compress:
-        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu',
+        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation=swish,
                          kernel_initializer='he_uniform', name=name + '_sq')(x)
 
     return x
 
 
 def _downblock(x):
+    import keras
     import keras.backend as K
 
     map_size = K.int_shape(x)[1] // 2
 
-    x = tk.dl.conv2d(256, (3, 3), strides=(2, 2), padding='same', activation=None,
-                     kernel_initializer='he_uniform', name='down{}_ds'.format(map_size))(x)
+    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(map_size))(x)
     assert K.int_shape(x)[1] == map_size
 
     x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='down{}_block'.format(map_size))
@@ -160,12 +169,13 @@ def _upblock(x, ref, map_size):
     x = keras.layers.UpSampling2D((up_size, up_size), name='up{}_us'.format(map_size))(x)
     t = ref['down{}'.format(map_size)]
 
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_c1'.format(map_size))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_cx'.format(map_size))(x)
     t = tk.dl.conv2d(256, (1, 1), padding='same', activation=None, kernel_initializer='he_uniform', name='up{}_lt'.format(map_size))(t)
     x = keras.layers.Add(name='up{}_mix'.format(map_size))([x, t])
     x = keras.layers.BatchNormalization(name='up{}_mix_bn'.format(map_size))(x)
-    x = keras.layers.Activation(activation='elu', name='up{}_mix_act'.format(map_size))(x)
-    x = tk.dl.conv2d(256, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='up{}_c2'.format(map_size))(x)
+    x = keras.layers.Activation(activation=swish, name='up{}_mix_act'.format(map_size))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name='up{}_c1'.format(map_size))(x)
+    x = tk.dl.conv2d(256, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name='up{}_c2'.format(map_size))(x)
 
     ref['out{}'.format(map_size)] = x
     return x
@@ -217,18 +227,18 @@ def _pm_create_shared_layers(od):
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_sq'),
-            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c0'),
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c2'),
-            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name=prefix + '_c3'),
-            'conf': keras.layers.Conv2D(od.nb_classes, (3, 3), padding='same',
+            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_sq'),
+            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c0'),
+            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c1'),
+            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c2'),
+            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c3'),
+            'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
                                         kernel_initializer='zeros',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                         activation='softmax',
                                         name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (3, 3), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+            'loc': keras.layers.Conv2D(4, (1, 1), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
                                        kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
@@ -266,6 +276,8 @@ def _pm_center(od, x, prefix):
     import keras
     from keras.regularizers import l2
     x = keras.layers.Flatten()(x)
+    x = keras.layers.Dense(64, activation=swish, kernel_initializer='he_uniform',
+                           name=prefix + '_fc')(x)
     conf = keras.layers.Dense(od.nb_classes,
                               kernel_initializer='zeros',
                               kernel_regularizer=l2(1e-4),
