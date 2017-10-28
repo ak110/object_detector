@@ -10,18 +10,6 @@ import pytoolkit as tk
 from voc_data import CLASS_NAMES
 
 
-def evaluate_callback(logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir):
-    """`mAP`を算出してprintする。"""
-    if not ((epoch + 1) % 16 == 0 or (epoch + 1) & epoch == 0):
-        return  # 重いので16回あたり1回だけ実施
-    if epoch + 1 == epochs:
-        return  # 最後の場合はfit_generatorが終わってから改めてやる
-
-    print('', file=sys.stdout, flush=True)
-    evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
-    print('', file=sys.stderr, flush=True)
-
-
 def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir):
     """`mAP`を算出してprintする。"""
     predict_model = od.create_predict_network(model)

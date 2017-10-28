@@ -14,7 +14,7 @@ import numpy as np
 import sklearn.externals.joblib
 
 import pytoolkit as tk
-from evaluation import evaluate, evaluate_callback
+from evaluation import evaluate
 from generator import Generator
 from model import ObjectDetector
 from voc_data import CLASS_NAMES, load_data
@@ -78,7 +78,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         # 学習済み重みの読み込み
         if args.warm:
-            model_path = result_dir.joinpath('model.best.h5')
+            model_path = result_dir.joinpath('model.h5')
             tk.dl.load_weights(model, model_path)
             logger.debug('warm start: %s', model_path.name)
 
@@ -105,9 +105,8 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         callbacks = []
         callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
-        callbacks.append(keras.callbacks.ModelCheckpoint(str(result_dir.joinpath('model.best.h5')), save_best_only=True))
         callbacks.append(keras.callbacks.LambdaCallback(
-            on_epoch_end=lambda epoch, logs: evaluate_callback(
+            on_epoch_end=lambda epoch, logs: _on_epoch_end(
                 logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir)
         ))
 
@@ -118,10 +117,23 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
-        model.save(str(result_dir.joinpath('model.h5')))
 
         # 最終結果表示
         evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs - 1, result_dir)
+
+
+def _on_epoch_end(logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir):
+    """モデルをsaveして、`mAP`を算出してprintする。"""
+    if not ((epoch + 1) % 16 == 0 or (epoch + 1) & epoch == 0):
+        return  # 重いので16回あたり1回だけ実施
+    if epoch + 1 == epochs:
+        return  # 最後の場合はfit_generatorが終わってから改めてやる
+
+    model.save(str(result_dir.joinpath('model.h5')))
+
+    print('', file=sys.stdout, flush=True)
+    evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
+    print('', file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':
