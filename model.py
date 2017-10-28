@@ -8,7 +8,7 @@ from tqdm import tqdm
 import model_net
 import pytoolkit as tk
 
-_VAR_LOC = 0.1  # SSD風適当スケーリング
+_VAR_LOC = 0.2  # SSD風適当スケーリング
 _VAR_SIZE = 0.2  # SSD風適当スケーリング
 
 
