@@ -187,6 +187,7 @@ class ObjectDetector(object):
         total_errors = 0
         iou_list = []
         assigned_counts = np.zeros((len(self.pb_info),))
+        assigned_count_list = []
         unrec_widths = []  # iou < 0.5の横幅
         unrec_heights = []  # iou < 0.5の高さ
         unrec_ars = []  # iou < 0.5のアスペクト比
@@ -203,6 +204,8 @@ class ObjectDetector(object):
             assigned_gt_list = np.array(assigned_gt_list)
             assigned_iou_list = np.array(assigned_iou_list)
 
+            # 1画像あたり何件のprior boxにassignされたか
+            assigned_count_list.append(len(assigned_indices))
             # 初期の座標のずれ具合の集計
             for assigned_pb, assigned_gt, _ in assigned_indices:
                 rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
@@ -255,6 +258,10 @@ class ObjectDetector(object):
                      len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
         # YOLOv2の論文のTable 1相当の値のつもり (複数のprior boxに割り当てたときの扱いがちょっと違いそう)
         logger.debug('Avg IOU: %.1f', np.mean(iou_list) * 100)
+        # 1画像あたり何件のprior boxにassignされたか
+        logger.debug('assigned count per image: mean=%.1f std=%.2f min=%d max=%d',
+                     np.mean(assigned_count_list), np.std(assigned_count_list),
+                     min(assigned_count_list), max(assigned_count_list))
         # Δlocの分布調査
         # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
@@ -275,6 +282,9 @@ class ObjectDetector(object):
         plt.close()
         plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
         plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
+        plt.close()
+        plt.hist(assigned_count_list, bins=32)
+        plt.gcf().savefig(str(result_dir.joinpath('assigned_count.hist.png')))
         plt.close()
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
