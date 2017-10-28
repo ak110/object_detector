@@ -197,17 +197,12 @@ class ObjectDetector(object):
 
         for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
             # 割り当ててみる
-            assigned_indices = self._assign_boxes(y.bboxes)
-            assigned_indices = list(assigned_indices)
-            assigned_pb_list, assigned_gt_list, assigned_iou_list = zip(*assigned_indices)
-            assigned_pb_list = np.array(assigned_pb_list)
-            assigned_gt_list = np.array(assigned_gt_list)
-            assigned_iou_list = np.array(assigned_iou_list)
+            assigned_pb_list, assigned_gt_list, assigned_iou_list = self._assign_boxes(y.bboxes)
 
             # 1画像あたり何件のprior boxにassignされたか
-            assigned_count_list.append(len(assigned_indices))
+            assigned_count_list.append(len(assigned_pb_list))
             # 初期の座標のずれ具合の集計
-            for assigned_pb, assigned_gt, _ in assigned_indices:
+            for assigned_pb, assigned_gt in zip(assigned_pb_list, assigned_gt_list):
                 rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
             # オブジェクトごとの集計
             for gt_ix, (class_id, difficult) in enumerate(zip(y.classes, y.difficults)):
@@ -298,8 +293,8 @@ class ObjectDetector(object):
         locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
         # 画像ごとのループ
         for i, y in enumerate(y_gt):
-            assigned_indices = self._assign_boxes(y.bboxes)
-            for pb_ix, gt_ix, _ in assigned_indices:
+            assigned_pb_list, assigned_gt_list, _ = self._assign_boxes(y.bboxes)
+            for pb_ix, gt_ix in zip(assigned_pb_list, assigned_gt_list):
                 class_id = y.classes[gt_ix]
                 assert 0 < class_id < self.nb_classes
                 confs[i, pb_ix, 0] = 0  # bg
@@ -350,7 +345,7 @@ class ObjectDetector(object):
         pb_indices = np.where(assigned_gt >= 0)[0]
         assert len(pb_indices) >= 1  # 1個以上は必ず割り当てないと損失関数などが面倒になる
 
-        return zip(pb_indices, assigned_gt[pb_indices], assigned_iou[pb_indices])
+        return pb_indices, assigned_gt[pb_indices], assigned_iou[pb_indices]
 
     def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, parallel=None):
         """予測結果のうちスコアが高いものを取り出す。
@@ -367,18 +362,15 @@ class ObjectDetector(object):
         assert locs_list.shape[1:] == (len(self.pb_locs), 4)
         # 画像毎にループ
         if parallel:
-            jobs = [joblib.delayed(self._select_prediction, check_pickle=False)(
-                    pred_classes, pred_confs, pred_locs, top_k, nms_threshold)
-                    for pred_classes, pred_confs, pred_locs
-                    in zip(classes_list, confs_list, locs_list)]
+            jobs = [joblib.delayed(self._select, check_pickle=False)(pc, pf, pl, top_k, nms_threshold)
+                    for pc, pf, pl in zip(classes_list, confs_list, locs_list)]
             result_classes, result_confs, result_locs = zip(*parallel(jobs))
         else:
             result_classes = []
             result_confs = []
             result_locs = []
-            for pred_classes, pred_confs, pred_locs in zip(classes_list, confs_list, locs_list):
-                img_classes, img_confs, img_locs = self._select_prediction(
-                    pred_classes, pred_confs, pred_locs, top_k, nms_threshold)
+            for pc, pf, pl in zip(classes_list, confs_list, locs_list):
+                img_classes, img_confs, img_locs = self._select(pc, pf, pl, top_k, nms_threshold)
                 result_classes.append(img_classes)
                 result_confs.append(img_confs)
                 result_locs.append(img_locs)
@@ -387,7 +379,7 @@ class ObjectDetector(object):
         assert len(result_locs) == len(classes_list)
         return result_classes, result_confs, result_locs
 
-    def _select_prediction(self, pred_classes, pred_confs, pred_locs, top_k, nms_threshold):
+    def _select(self, pred_classes, pred_confs, pred_locs, top_k, nms_threshold):
         # 適当に上位のみ見る
         conf_mask = pred_confs.argsort()[::-1][:top_k * 4]
         pred_classes = pred_classes[conf_mask]

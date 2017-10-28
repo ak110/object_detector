@@ -28,13 +28,13 @@ class Generator(tk.image.ImageDataGenerator):
         self.add(0.125, tk.image.RandomContrast())
         self.add(0.125, tk.image.RandomHue())
 
-    def _prepare(self, X, y=None, weights=None, parallel=None, data_augmentation=False, rand=None):
-        """画像の読み込みとDataAugmentation。"""
-        X, y, weights = super()._prepare(X, y, weights, parallel, data_augmentation, rand)
-        if self.od is not None and y[0] is not None:
-            # 学習用に変換
-            y = self.od.encode_truth(y)
-        return X, y, weights
+    def _load(self, x, y, w, data_augmentation, seed):
+        rgb, y, w = super()._load(x, y, w, data_augmentation, seed)
+
+        if self.od is not None and y is not None:
+            y = self.od.encode_truth([y])[0]
+
+        return rgb, y, w
 
     def _transform(self, rgb: np.ndarray, y: tk.ml.ObjectsAnnotation, w, rand: np.random.RandomState):
         """変形を伴うAugmentation。"""

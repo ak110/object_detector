@@ -20,12 +20,17 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     steps = gen.steps_per_epoch(len(X_test), batch_size)
     with tqdm(total=len(X_test), unit='f', desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
+            # 予測
             pred_classes, pred_confs, pred_locs = predict_model.predict(X_batch)
+            # NMSなど
             pred_classes, pred_confs, pred_locs = od.select_predictions(
                 pred_classes, pred_confs, pred_locs, parallel=parallel)
             pred_classes_list.extend(pred_classes)
             pred_confs_list.extend(pred_confs)
             pred_locs_list.extend(pred_locs)
+            # prior box毎の再現率などの調査
+            # TODO: assignでmaxのみ取ってきたい
+            # 先頭部分のみ可視化
             if i == 0:
                 save_dir = result_dir.joinpath('___check')
                 for j, (pcl, pcf, pl) in enumerate(zip(pred_classes, pred_confs, pred_locs)):
@@ -33,6 +38,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
                     tk.ml.plot_objects(
                         X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
                         pcl[mask], pcf[mask], pl[mask], CLASS_NAMES)
+            # 次へ
             pbar.update(len(X_batch))
             if i + 1 >= steps:
                 break
