@@ -26,7 +26,7 @@ class Generator(tk.image.ImageDataGenerator):
         self.add(0.125, tk.image.RandomSaturation())
         self.add(0.125, tk.image.RandomBrightness())
         self.add(0.125, tk.image.RandomContrast())
-        self.add(0.125, tk.image.RandomLighting())
+        self.add(0.125, tk.image.RandomHue())
 
     def _prepare(self, X, y=None, weights=None, parallel=None, data_augmentation=False, rand=None):
         """画像の読み込みとDataAugmentation。"""
