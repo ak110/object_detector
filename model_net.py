@@ -238,9 +238,10 @@ def _pm_create_shared_layers(od):
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                         activation='softmax',
                                         name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (3, 3), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+            'loc': keras.layers.Conv2D(4, (3, 3), padding='same',
                                        kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
+                                       bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
                                        name=prefix + '_loc'),
             'iou': keras.layers.Conv2D(1, (3, 3), padding='same',
                                        kernel_initializer='zeros',
@@ -284,9 +285,10 @@ def _pm_center(od, x, prefix):
                               bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                               activation='softmax',
                               name=prefix + '_conf')(x)
-    loc = keras.layers.Dense(4, use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+    loc = keras.layers.Dense(4,
                              kernel_initializer='zeros',
                              kernel_regularizer=l2(1e-4),
+                             bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
                              name=prefix + '_loc')(x)
     mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
     iou = keras.layers.Dense(1,
