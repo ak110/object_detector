@@ -34,7 +34,7 @@ def create_network(od):
             break
         map_size *= 2
     # prediction module
-    outputs = _create_pm(od, ref, lr_multipliers)
+    outputs = _create_pm(od, ref)
 
     return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
 
@@ -181,12 +181,9 @@ def _upblock(x, ref, map_size):
     return x
 
 
-def _create_pm(od, ref, lr_multipliers):
+def _create_pm(od, ref):
     """Prediction module."""
     import keras
-
-    # スケール間で重みを共有するレイヤー
-    shared_layers = _pm_create_shared_layers(od)
 
     confs, locs, ious = [], [], []
     for map_size in od.map_sizes:
@@ -194,7 +191,7 @@ def _create_pm(od, ref, lr_multipliers):
         x = ref['out{}'.format(map_size)]
         for pat_ix in range(len(od.pb_size_patterns)):
             prefix = 'pm{}-{}'.format(map_size, pat_ix)
-            conf, loc, iou = _pm(od, x, prefix, shared_layers[pat_ix])
+            conf, loc, iou = _pm(od, x, prefix)
             confs.append(conf)
             locs.append(loc)
             ious.append(iou)
@@ -211,61 +208,41 @@ def _create_pm(od, ref, lr_multipliers):
     # いったんくっつける (損失関数の中で分割して使う)
     outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
 
-    # 学習率の調整
-    m = [1 / len(od.map_sizes)]
-    for shlayers in shared_layers.values():
-        for layer in shlayers.values():
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, m * len(w)))
     return outputs
 
 
-def _pm_create_shared_layers(od):
+def _pm(od, x, prefix):
     import keras
     from keras.regularizers import l2
-    shared_layers = {}
-    for pat_ix in range(len(od.pb_size_patterns)):
-        prefix = 'pm-{}'.format(pat_ix)
-        shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_sq'),
-            'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c0'),
-            'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c1'),
-            'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c2'),
-            'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c3'),
-            'conf': keras.layers.Conv2D(od.nb_classes, (3, 3), padding='same',
-                                        kernel_initializer='zeros',
-                                        kernel_regularizer=l2(1e-4),
-                                        bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
-                                        activation='softmax',
-                                        name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (3, 3), padding='same',
-                                       kernel_initializer='zeros',
-                                       kernel_regularizer=l2(1e-4),
-                                       bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
-                                       name=prefix + '_loc'),
-            'iou': keras.layers.Conv2D(1, (3, 3), padding='same',
-                                       kernel_initializer='zeros',
-                                       kernel_regularizer=l2(1e-4),
-                                       activation='sigmoid',
-                                       name=prefix + '_iou'),
-        }
-    return shared_layers
-
-
-def _pm(od, x, prefix, shlayers):
-    import keras
     # squeeze
-    x = shlayers['sq'](x)
+    x = tk.dl.conv2d(64, (1, 1), padding='same', activation=swish,
+                     kernel_initializer='he_uniform', name=prefix + '_sq')(x)
     # DenseBlock
     for branch in range(4):
         b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
-        b = shlayers['c' + str(branch)](b)
+        b = tk.dl.conv2d(32, (3, 3), padding='same', activation=swish,
+                         kernel_initializer='he_uniform', name=prefix + '_c' + str(branch))(b)
         x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
     # conf/loc/iou
-    conf = shlayers['conf'](x)
-    loc = shlayers['loc'](x)
+    conf = tk.dl.conv2d(od.nb_classes, (1, 1), padding='same',
+                        kernel_initializer='zeros',
+                        kernel_regularizer=l2(1e-4),
+                        bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
+                        activation='softmax',
+                        use_bn=False,
+                        name=prefix + '_conf')(x)
+    loc = tk.dl.conv2d(4, (1, 1), padding='same',
+                       kernel_initializer='zeros',
+                       kernel_regularizer=l2(1e-4),
+                       bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
+                       activation=None,
+                       name=prefix + '_loc')(x)
     mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
-    iou = shlayers['iou'](mix)
+    iou = tk.dl.conv2d(1, (3, 3), padding='same',
+                       kernel_initializer='zeros',
+                       kernel_regularizer=l2(1e-4),
+                       activation='sigmoid',
+                       name=prefix + '_iou')(mix)
     # reshape
     conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
     loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
