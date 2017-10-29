@@ -153,7 +153,7 @@ def _downblock(x):
 
 def _centerblock(x, ref, map_size):
     import keras
-    x = _denseblock(x, 64, 4, bottleneck=True, compress=True, name='center_block')
+    x = _denseblock(x, 64, 8, bottleneck=True, compress=True, name='center_block')
     x = keras.layers.AveragePooling2D((map_size, map_size))(x)
     ref['out{}'.format(1)] = x
     return x
@@ -227,18 +227,18 @@ def _pm_create_shared_layers(od):
     for pat_ix in range(len(od.pb_size_patterns)):
         prefix = 'pm-{}'.format(pat_ix)
         shared_layers[pat_ix] = {
-            'sq': keras.layers.Conv2D(64, (1, 1), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_sq'),
+            'sq': keras.layers.Conv2D(64, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_sq'),
             'c0': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c0'),
             'c1': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c1'),
             'c2': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c2'),
             'c3': keras.layers.Conv2D(32, (3, 3), padding='same', activation=swish, kernel_initializer='he_uniform', name=prefix + '_c3'),
-            'conf': keras.layers.Conv2D(od.nb_classes, (1, 1), padding='same',
+            'conf': keras.layers.Conv2D(od.nb_classes, (3, 3), padding='same',
                                         kernel_initializer='zeros',
                                         kernel_regularizer=l2(1e-4),
                                         bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
                                         activation='softmax',
                                         name=prefix + '_conf'),
-            'loc': keras.layers.Conv2D(4, (1, 1), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
+            'loc': keras.layers.Conv2D(4, (3, 3), padding='same', use_bias=False,  # 平均的には≒0のはずなのでバイアス無し
                                        kernel_initializer='zeros',
                                        kernel_regularizer=l2(1e-4),
                                        name=prefix + '_loc'),
