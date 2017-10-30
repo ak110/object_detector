@@ -2,8 +2,8 @@
 import pathlib
 import sys
 
-import joblib
 import numpy as np
+import sklearn.externals.joblib as joblib
 from tqdm import tqdm
 
 import pytoolkit as tk

@@ -70,7 +70,9 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
     import keras.backend as K
     K.set_image_dim_ordering('tf')
     with tk.dl.session():
-        model, lr_multipliers = od.create_network()
+        gpu_count = tk.get_gpu_count()
+        with tk.dl.device(cpu=gpu_count >= 2):
+            model, lr_multipliers = od.create_network()
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
@@ -84,8 +86,8 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             logger.debug('warm start: %s', model_path.name)
 
         # マルチGPU対応
-        logger.debug('gpu count = %d', tk.get_gpu_count())
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
+        logger.debug('gpu count = %d', gpu_count)
 
         model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 

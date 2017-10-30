@@ -1,7 +1,7 @@
 """ObjectDetectionのモデル。"""
-import joblib
 import numpy as np
 import sklearn.cluster
+import sklearn.externals.joblib as joblib
 import sklearn.metrics
 from tqdm import tqdm
 
