@@ -236,12 +236,14 @@ def _pm(od, x, prefix):
                        kernel_regularizer=l2(1e-4),
                        bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
                        activation=None,
+                       use_bn=False,
                        name=prefix + '_loc')(x)
     mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
     iou = tk.dl.conv2d(1, (3, 3), padding='same',
                        kernel_initializer='zeros',
                        kernel_regularizer=l2(1e-4),
                        activation='sigmoid',
+                       use_bn=False,
                        name=prefix + '_iou')(mix)
     # reshape
     conf = keras.layers.Reshape((-1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
@@ -254,8 +256,9 @@ def _pm_center(od, x, prefix):
     import keras
     from keras.regularizers import l2
     x = keras.layers.Flatten()(x)
-    x = keras.layers.Dense(64, activation=swish, kernel_initializer='he_uniform',
-                           name=prefix + '_fc')(x)
+    x = keras.layers.Dense(64, kernel_initializer='he_uniform', name=prefix + '_fc')(x)
+    x = keras.layers.BatchNormalization(name=prefix + '_fc_bn')(x)
+    x = keras.layers.Activation(activation=swish, name=prefix + '_fc_act')(x)
     conf = keras.layers.Dense(od.nb_classes,
                               kernel_initializer='zeros',
                               kernel_regularizer=l2(1e-4),
