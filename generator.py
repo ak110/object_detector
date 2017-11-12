@@ -26,8 +26,8 @@ class Generator(tk.image.ImageDataGenerator):
         self.add(0.5, tk.image.RandomContrast())
         self.add(0.5, tk.image.RandomHue())
 
-    def _load(self, x, y, w, data_augmentation, seed):
-        rgb, y, w = super()._load(x, y, w, data_augmentation, seed)
+    def generate(self, index, seed, x_, y_, w_, data_augmentation):
+        rgb, y, w = super().generate(index, seed, x_, y_, w_, data_augmentation)
 
         if self.od is not None and y is not None:
             y = self.od.encode_truth([y])[0]
@@ -50,7 +50,7 @@ class Generator(tk.image.ImageDataGenerator):
             # padding (zoom out)
             old_w, old_h = rgb.shape[1], rgb.shape[0]
             for _ in range(30):
-                pr = np.random.uniform(1.5, 2.5)  # SSDは16倍とか言っているが、やり過ぎな気がするので適当
+                pr = np.random.uniform(1.5, 4)  # SSDは16倍とか言っているが、やり過ぎな気がするので適当
                 pw = max(old_w, int(round(old_w * pr * ar)))
                 ph = max(old_h, int(round(old_h * pr / ar)))
                 px = rand.randint(0, pw - old_w + 1)
@@ -63,7 +63,8 @@ class Generator(tk.image.ImageDataGenerator):
                     if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
                         continue
                     y.bboxes = bboxes / np.tile([pw, ph], 2)
-                rgb = tk.ndimage.pad_ltrb(rgb, px, py, pw - old_w - px, ph - old_h - py)
+                padding = rand.choice(('same', 'zero'))
+                rgb = tk.ndimage.pad_ltrb(rgb, px, py, pw - old_w - px, ph - old_h - py, padding, rand)
                 assert rgb.shape[1] == pw
                 assert rgb.shape[0] == ph
                 break
