@@ -63,7 +63,7 @@ class Generator(tk.image.ImageDataGenerator):
                     if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
                         continue
                     y.bboxes = bboxes / np.tile([pw, ph], 2)
-                padding = rand.choice(('same', 'zero'))
+                padding = rand.choice(('same', 'zero', 'rand'))
                 rgb = tk.ndimage.pad_ltrb(rgb, px, py, pw - old_w - px, ph - old_h - py, padding, rand)
                 assert rgb.shape[1] == pw
                 assert rgb.shape[0] == ph
