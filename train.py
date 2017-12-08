@@ -42,7 +42,7 @@ def _main():
     result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
     result_dir.mkdir(parents=True, exist_ok=True)
     data_dir = pathlib.Path(args.data_dir)
-    logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'))
+    logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'), fmt=None)
 
     start_time = time.time()
     _run(args, logger, result_dir, data_dir)

@@ -26,8 +26,8 @@ class Generator(tk.image.ImageDataGenerator):
         self.add(0.5, tk.image.RandomContrast())
         self.add(0.5, tk.image.RandomHue())
 
-    def generate(self, index, seed, x_, y_, w_, data_augmentation):
-        rgb, y, w = super().generate(index, seed, x_, y_, w_, data_augmentation)
+    def _load(self, x, y, w, data_augmentation, seed):
+        rgb, y, w = super()._load(x, y, w, data_augmentation, seed)
 
         if self.od is not None and y is not None:
             y = self.od.encode_truth([y])[0]

@@ -302,7 +302,8 @@ class ObjectDetector(object):
                 locs[i, pb_ix, :] = self.encode_locs(y.bboxes, gt_ix, pb_ix)
 
         # いったんくっつける (損失関数の中で分割して使う)
-        return np.concatenate([confs, locs], axis=-1)
+        dummy = np.zeros((len(y_gt), len(self.pb_locs), 1), dtype=np.float32)  # ネットワークの出力と形式を合わせる
+        return np.concatenate([confs, locs, dummy], axis=-1)
 
     def _assign_boxes(self, bboxes):
         """各bounding boxをprior boxに割り当てる。
@@ -416,7 +417,7 @@ class ObjectDetector(object):
         """損失関数。"""
         import keras.backend as K
         import tensorflow as tf
-        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
         pred_confs, pred_locs, pred_iou = y_pred[:, :, :-5], y_pred[:, :, -5:-1], y_pred[:, :, -1]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)  # 各batch毎のobj数。
@@ -436,7 +437,7 @@ class ObjectDetector(object):
     def loss_conf(self, y_true, y_pred):
         """クラス分類の損失項。(metrics用)"""
         import keras.backend as K
-        gt_confs = y_true[:, :, :-4]
+        gt_confs = y_true[:, :, :-5]
         pred_confs = y_pred[:, :, :-5]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
@@ -446,7 +447,7 @@ class ObjectDetector(object):
     def loss_loc(y_true, y_pred):
         """位置の損失項。(metrics用)"""
         import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
         pred_locs = y_pred[:, :, -5:-1]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
@@ -455,7 +456,7 @@ class ObjectDetector(object):
     def loss_iou(self, y_true, y_pred):
         """IOUの損失項。(metrics用)"""
         import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-4], y_true[:, :, -4:]
+        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
         pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
@@ -506,7 +507,7 @@ class ObjectDetector(object):
     def acc_bg(y_true, y_pred):
         """背景の再現率。"""
         import keras.backend as K
-        gt_confs = y_true[:, :, :-4]
+        gt_confs = y_true[:, :, :-5]
         pred_confs = y_pred[:, :, :-5]
         bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
         bg_count = K.sum(bg_mask, axis=-1)
@@ -517,7 +518,7 @@ class ObjectDetector(object):
     def acc_obj(y_true, y_pred):
         """物体の再現率。"""
         import keras.backend as K
-        gt_confs = y_true[:, :, :-4]
+        gt_confs = y_true[:, :, :-5]
         pred_confs = y_pred[:, :, :-5]
         obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
         obj_count = K.sum(obj_mask, axis=-1)
@@ -527,11 +528,6 @@ class ObjectDetector(object):
     def create_network(self):
         """ネットワークの作成"""
         return model_net.create_network(self)
-
-    @staticmethod
-    def create_pretrain_network(input_shape, nb_classes):
-        """事前学習用ネットワークの作成"""
-        return model_net.create_pretrain_network(input_shape, nb_classes)
 
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""
