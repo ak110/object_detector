@@ -5,83 +5,66 @@
 -test:  VOC2007 test
 """
 import argparse
-import os
 import pathlib
 import sys
 import time
 
-import better_exceptions
 import numpy as np
 import sklearn.externals.joblib
 
+import config
+import generator
+import models
 import pytoolkit as tk
-from evaluation import evaluate
-from generator import Generator
-from model import ObjectDetector
-from voc_data import CLASS_NAMES, load_data
+import voc_data
 
 
 def _main():
-    import matplotlib as mpl
-    mpl.use('Agg')
-    better_exceptions.MAX_LENGTH = 128
-    script_path = pathlib.Path(__file__).resolve()
-    base_dir = script_path.parent
-    os.chdir(str(base_dir))
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
-    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
+    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.BASE_DIR.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320 or 512', default=320, type=int)
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
     args = parser.parse_args()
 
-    result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
-    result_dir.mkdir(parents=True, exist_ok=True)
-    data_dir = pathlib.Path(args.data_dir)
-    logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'), fmt=None)
-
     start_time = time.time()
-    _run(args, logger, result_dir, data_dir)
+    logger = tk.create_tee_logger(config.LOG_PATH)
+    _run(logger, args)
     elapsed_time = time.time() - start_time
-
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
-def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
+def _run(logger, args):
     # データの読み込み
-    (X_train, y_train), (X_test, y_test) = load_data(data_dir, args.debug, args.batch_size)
+    data_dir = pathlib.Path(args.data_dir)
+    (X_train, y_train), (X_test, y_test) = voc_data.load_data(data_dir)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    od = ObjectDetector.create(args.input_size, args.map_sizes, len(CLASS_NAMES), y_train)
+    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(voc_data.CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
-    sklearn.externals.joblib.dump(od, str(result_dir.joinpath('model.pkl')))
+    sklearn.externals.joblib.dump(od, str(config.RESULT_DIR.joinpath('model.pkl')))
 
-    import keras
-    import keras.backend as K
-    K.set_image_dim_ordering('tf')
     with tk.dl.session():
         gpu_count = tk.get_gpu_count()
         with tk.dl.device(cpu=gpu_count >= 2):
             model, lr_multipliers = od.create_network()
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
-        tk.dl.plot_model_params(model, result_dir.joinpath('model.params.png'))
+        tk.dl.plot_model_params(model, config.RESULT_DIR.joinpath('model.params.png'))
 
-        # keras.utils.plot_model(model, str(result_dir.joinpath('model.png')))
+        # keras.utils.plot_model(model, str(config.RESULT_DIR.joinpath('model.png')))
 
         # 学習済み重みの読み込み
         if args.warm:
-            model_path = result_dir.joinpath('model.h5')
+            model_path = config.RESULT_DIR.joinpath('model.h5')
             tk.dl.load_weights(model, model_path)
             logger.debug('warm start: %s', model_path.name)
 
@@ -91,7 +74,7 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
 
         model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 
-        gen = Generator(image_size=od.image_size, od=od)
+        gen = generator.Generator(image_size=od.image_size, od=od)
 
         # 学習率の決定：
         # ・CIFARやImageNetの分類では
@@ -106,12 +89,8 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
         epochs = len(lr_list)
 
         callbacks = []
-        callbacks.append(tk.dl.my_callback_factory()(result_dir, lr_list=lr_list))
-        callbacks.append(tk.dl.learning_curve_plotter_factory()(result_dir.joinpath('history.{metric}.png'), 'loss'))
-        callbacks.append(keras.callbacks.LambdaCallback(
-            on_epoch_end=lambda epoch, logs: _on_epoch_end(
-                logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir)
-        ))
+        callbacks.append(tk.dl.my_callback_factory()(config.RESULT_DIR, lr_list=lr_list))
+        callbacks.append(tk.dl.learning_curve_plotter_factory()(config.RESULT_DIR.joinpath('history.{metric}.png'), 'loss'))
 
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
@@ -120,23 +99,6 @@ def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
-
-        # 最終結果表示
-        evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs - 1, result_dir)
-
-
-def _on_epoch_end(logger, od, model, gen, X_test, y_test, batch_size, epoch, epochs, result_dir):
-    """モデルをsaveして、`mAP`を算出してprintする。"""
-    if not ((epoch + 1) % 16 == 0 or (epoch + 1) & epoch == 0):
-        return  # 重いので16回あたり1回だけ実施
-    if epoch + 1 == epochs:
-        return  # 最後の場合はfit_generatorが終わってから改めてやる
-
-    model.save(str(result_dir.joinpath('model.h5')))
-
-    print('', file=sys.stdout, flush=True)
-    evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir)
-    print('', file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':

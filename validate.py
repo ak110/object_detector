@@ -1,66 +1,53 @@
 #!/usr/bin/env python
 """学習済みモデルで検証してみるコード。"""
 import argparse
-import os
 import pathlib
 import time
 
-import better_exceptions
 import numpy as np
 import sklearn.externals.joblib
 
+import config
+import evaluation
+import generator
 import pytoolkit as tk
-from evaluation import evaluate
-from generator import Generator
-from voc_data import load_data
+import voc_data
 
 
 def _main():
-    import matplotlib as mpl
-    mpl.use('Agg')
-    better_exceptions.MAX_LENGTH = 128
-    script_path = pathlib.Path(__file__).resolve()
-    base_dir = script_path.parent
-    os.chdir(str(base_dir))
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--debug', help='デバッグモード。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
-    result_dir = base_dir.joinpath('results{}'.format('_debug' if args.debug else ''))
-    result_dir.mkdir(parents=True, exist_ok=True)
-    data_dir = pathlib.Path(args.data_dir)
-    logger = tk.create_tee_logger(result_dir.joinpath(script_path.stem + '.log'), fmt=None)
-
     start_time = time.time()
-    _run(args, logger, result_dir, data_dir)
+    logger = tk.create_tee_logger(config.LOG_PATH)
+    _run(logger, args)
     elapsed_time = time.time() - start_time
-
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
-def _run(args, logger, result_dir: pathlib.Path, data_dir: pathlib.Path):
+def _run(logger, args):
     # データの読み込み
-    (X_train, _), (X_test, y_test) = load_data(data_dir, args.debug, args.batch_size)
+    data_dir = pathlib.Path(args.data_dir)
+    (X_train, _), (X_test, y_test) = voc_data.load_data(data_dir)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     import keras.backend as K
     K.set_image_dim_ordering('tf')
     with tk.dl.session():
         # モデルの読み込み
-        od = sklearn.externals.joblib.load(str(result_dir.joinpath('model.pkl')))
+        od = sklearn.externals.joblib.load(str(config.RESULT_DIR.joinpath('model.pkl')))
         model, _ = od.create_network()
-        model.load_weights(str(result_dir.joinpath('model.h5')), by_name=True)
+        model.load_weights(str(config.RESULT_DIR.joinpath('model.h5')), by_name=True)
 
         # マルチGPU対応
         logger.debug('gpu count = %d', tk.get_gpu_count())
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
         # 評価
-        gen = Generator(image_size=od.image_size, od=od)
-        evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, result_dir)
+        gen = generator.Generator(image_size=od.image_size, od=od)
+        evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, config.RESULT_DIR)
 
 
 if __name__ == '__main__':
