@@ -22,8 +22,9 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.BASE_DIR.joinpath('data')))  # sambaの問題のためのwork around...
-    parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320 or 512', default=320, type=int)
+    parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320、512など。', default=320, type=int)
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
+    parser.add_argument('--network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
     args = parser.parse_args()
@@ -54,7 +55,7 @@ def _run(logger, args):
     with tk.dl.session():
         gpu_count = tk.get_gpu_count()
         with tk.dl.device(cpu=gpu_count >= 2):
-            model, lr_multipliers = od.create_network()
+            model, lr_multipliers = od.create_network(args.network)
         model.summary(print_fn=logger.debug)
         logger.debug('network depth: %d', tk.dl.count_network_depth(model))
         tk.dl.plot_model_params(model, config.RESULT_DIR.joinpath('model.params.png'))
@@ -73,7 +74,7 @@ def _run(logger, args):
 
         model.compile(tk.dl.nsgd()(lr_multipliers=lr_multipliers), od.loss, od.metrics)
 
-        gen = generator.Generator(image_size=od.image_size, od=od)
+        gen = generator.Generator(image_size=od.image_size, od=od, base_network=args.network)
 
         # 学習率の決定：
         # ・CIFARやImageNetの分類では

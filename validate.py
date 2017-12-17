@@ -17,6 +17,7 @@ import pytoolkit as tk
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
+    parser.add_argument('--network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
@@ -38,7 +39,7 @@ def _run(logger, args):
     with tk.dl.session():
         # モデルの読み込み
         od = sklearn.externals.joblib.load(str(config.RESULT_DIR.joinpath('model.pkl')))
-        model, _ = od.create_network()
+        model, _ = od.create_network(args.network)
         model.load_weights(str(config.RESULT_DIR.joinpath('model.h5')), by_name=True)
 
         # マルチGPU対応
@@ -46,7 +47,7 @@ def _run(logger, args):
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
         # 評価
-        gen = generator.Generator(image_size=od.image_size, od=od)
+        gen = generator.Generator(image_size=od.image_size, od=od, base_network=args.network)
         evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, config.RESULT_DIR)
 
 

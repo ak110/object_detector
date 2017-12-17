@@ -525,9 +525,9 @@ class ObjectDetector(object):
         acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
         return K.sum(acc * obj_mask, axis=-1) / obj_count
 
-    def create_network(self):
+    def create_network(self, base_network='resnet50'):
         """ネットワークの作成"""
-        return model_net.create_network(self)
+        return model_net.create_network(self, base_network)
 
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""

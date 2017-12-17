@@ -9,9 +9,9 @@ import pytoolkit as tk
 class Generator(tk.image.ImageDataGenerator):
     """データのGenerator。"""
 
-    def __init__(self, image_size, od: models.ObjectDetector, preprocess_input=model_net.get_preprocess_input()):
+    def __init__(self, image_size, od: models.ObjectDetector, base_network: str):
         self.od = od
-        super().__init__(image_size, preprocess_input=preprocess_input)
+        super().__init__(image_size, preprocess_input=model_net.get_preprocess_input(base_network))
         self.add(0.5, tk.image.RandomErasing())
         self.add(1.0, tk.image.RandomErasing(object_aware=True, object_aware_prob=0.5))
         self.add(0.25, tk.image.RandomBlur())
@@ -114,7 +114,9 @@ def _check():
     save_dir = base_dir.joinpath('___generator_check')
     save_dir.mkdir(exist_ok=True)
 
-    (_, _), (X_test, y_test) = load_data(data_dir, True, 1)
+    (_, _), (X_test, y_test) = load_data(data_dir)
+    X_test = X_test[:1]
+    y_test = y_test[:1]
 
     gen = Generator((512, 512), od=None, preprocess_input=tk.image.preprocess_input_abs1)
     for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=128), gen.flow(X_test, y_test, data_augmentation=True)):

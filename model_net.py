@@ -7,14 +7,14 @@ import pytoolkit as tk
 _BASENET_TYPE = 'resnet50'
 
 
-def create_network(od):
+def create_network(od, base_network):
     """モデルの作成。"""
     import keras
     import keras.backend as K
 
     # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(od.image_size + (3,))
-    x, ref, lr_multipliers = _create_basenet(od, x)
+    x, ref, lr_multipliers = _create_basenet(od, x, base_network)
     # center
     map_size = K.int_shape(x)[1]
     x = _centerblock(x, ref, map_size)
@@ -30,16 +30,16 @@ def create_network(od):
     return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
 
 
-def get_preprocess_input():
+def get_preprocess_input(base_network):
     """`preprocess_input`を返す。"""
-    if _BASENET_TYPE in ('vgg16', 'resnet50'):
+    if base_network in ('vgg16', 'resnet50'):
         return tk.image.preprocess_input_mean
     else:
-        assert _BASENET_TYPE in ('custom', 'xception')
+        assert base_network in ('custom', 'xception')
         return tk.image.preprocess_input_abs1
 
 
-def _create_basenet(od, x):
+def _create_basenet(od, x, base_network):
     """ベースネットワークの作成。"""
     import keras
     import keras.backend as K
@@ -47,20 +47,20 @@ def _create_basenet(od, x):
     ref_list = []
 
     lr_multipliers = {}
-    if _BASENET_TYPE == 'custom':
+    if base_network == 'custom':
         x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)  # 160x160
         x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
         x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         ref_list.append(x)
-    elif _BASENET_TYPE == 'vgg16':
+    elif base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [0.01] * len(w)))
         ref_list.append(basenet.get_layer(name='block4_pool').input)
         ref_list.append(basenet.get_layer(name='block5_pool').input)
-    elif _BASENET_TYPE == 'resnet50':
+    elif base_network == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
@@ -68,7 +68,7 @@ def _create_basenet(od, x):
         ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
         ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
         ref_list.append(basenet.get_layer(name='avg_pool').input)
-    elif _BASENET_TYPE == 'xception':
+    elif base_network == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
