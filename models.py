@@ -37,8 +37,8 @@ class ObjectDetector(object):
         bb_base_areas = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
-        assert (bb_base_sizes >= 0).all()  # 手抜き用
-        assert (bb_base_sizes < 1).all()  # 手抜き用
+        assert (bb_base_sizes >= 0).all()  # 不正なデータは含まれない想定 (手抜き)
+        assert (bb_base_sizes < 1).all()  # 不正なデータは含まれない想定 (手抜き)
         tile_sizes = 1 / map_sizes
         bboxes_size_patterns = []
         for ti, tile_size in enumerate(tile_sizes):

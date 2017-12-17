@@ -12,7 +12,8 @@ import numpy as np
 import sklearn.externals.joblib
 
 import config
-import data_voc
+import data
+import evaluation
 import generator
 import models
 import pytoolkit as tk
@@ -21,6 +22,7 @@ import pytoolkit as tk
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--warm', help='warm start。', action='store_true', default=False)
+    parser.add_argument('--data', help='データの種類。', default='voc', choices=['voc', 'pkl'])
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.BASE_DIR.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320、512など。', default=320, type=int)
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
@@ -39,17 +41,16 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, y_train), (X_test, y_test) = data_voc.load_data(data_dir)
+    (X_train, y_train), (X_test, y_test), class_names = data.load_data(data_dir, args.data)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(data_voc.CLASS_NAMES), y_train)
+    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(class_names), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
-
     sklearn.externals.joblib.dump(od, str(config.RESULT_DIR.joinpath('model.pkl')))
 
     with tk.dl.session():
@@ -76,14 +77,13 @@ def _run(logger, args):
 
         gen = generator.Generator(image_size=od.image_size, od=od, base_network=args.network)
 
-        # 学習率の決定：
-        # ・CIFARやImageNetの分類では
-        #   lr 0.1～0.5、batch size 64～256くらいが多いのでその辺を基準に。
+        # 学習率：
+        # ・CIFARやImageNetの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。
         # ・バッチサイズに比例させると良さそう？
-        # ・lossが分類＋回帰×4＋回帰なので、とりあえず1 / 3倍にしてみる。(怪)
+        # ・lossがクラス、位置×4、IoUなので / 6くらいしてみる。
         # epoch数：
         # ・指定値 // 2 + 指定値 // 4 + 指定値 // 4。
-        base_lr = 1e-1 / 3 * (batch_size / 128)
+        base_lr = 0.5 / 6 * (batch_size / 256)
         lr_list = [base_lr] * (args.epochs // 2) + [base_lr / 10] * (args.epochs // 4) + [base_lr / 100] * (args.epochs // 4)
         epochs = len(lr_list)
 
@@ -92,13 +92,15 @@ def _run(logger, args):
         callbacks.append(tk.dl.learning_curve_plotter_factory()(config.RESULT_DIR.joinpath('history.{metric}.png'), 'loss'))
 
         model.fit_generator(
-            gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=not args.debug, shuffle=True),
-            steps_per_epoch=gen.steps_per_epoch(len(X_train) * (512 if args.debug else 1), batch_size),
+            gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=True, shuffle=True),
+            steps_per_epoch=gen.steps_per_epoch(len(X_train), batch_size),
             epochs=epochs,
             validation_data=gen.flow(X_test, y_test, batch_size=batch_size),
             validation_steps=gen.steps_per_epoch(len(X_test), batch_size),
             callbacks=callbacks)
+        model.save_weights(str(config.RESULT_DIR.joinpath('model.h5')))
 
+        evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, epochs, class_names, config.RESULT_DIR)
 
 if __name__ == '__main__':
     _main()

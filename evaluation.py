@@ -7,10 +7,9 @@ import sklearn.externals.joblib as joblib
 from tqdm import tqdm
 
 import pytoolkit as tk
-from data_voc import CLASS_NAMES
 
 
-def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir):
+def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, class_names, result_dir):
     """`mAP`を算出してprintする。"""
     predict_model = od.create_predict_network(model)
 
@@ -37,7 +36,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
                     mask = pcf >= 0.5  # 表示はある程度絞る (mAP算出のためには片っ端からリストアップしているため)
                     tk.ml.plot_objects(
                         X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
-                        pcl[mask], pcf[mask], pl[mask], CLASS_NAMES)
+                        pcl[mask], pcf[mask], pl[mask], class_names)
             # 次へ
             pbar.update(len(X_batch))
             if i + 1 >= steps:
@@ -58,9 +57,9 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_d
     logger.debug('epoch={:2d} mAP={:.4f} mAP(VOC2007)={:.4f}'.format(epoch + 1, map1, map2))
 
 
-def plot_truth(X_test, y_test, save_dir):
+def plot_truth(X_test, y_test, class_names, save_dir):
     """正解データの画像化。"""
     for X, y in zip(X_test, y_test):
         tk.ml.plot_objects(
             X, save_dir.joinpath(pathlib.Path(X).name + '.png'),
-            y.classes, None, y.bboxes, CLASS_NAMES)
+            y.classes, None, y.bboxes, class_names)

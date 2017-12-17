@@ -108,6 +108,9 @@ ENV/
 # データ
 data/VOCdevkit
 data/VOCdevkit/
+data/csv
+data/csv/
+data/*.pkl
 results_debug/
 
 # 当面は実行結果もignore

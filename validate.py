@@ -8,7 +8,7 @@ import numpy as np
 import sklearn.externals.joblib
 
 import config
-import data_voc
+import data
 import evaluation
 import generator
 import pytoolkit as tk
@@ -16,6 +16,7 @@ import pytoolkit as tk
 
 def _main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--data', help='データの種類。', default='voc', choices=['voc', 'pkl'])
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
@@ -31,7 +32,7 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, _), (X_test, y_test) = data_voc.load_data(data_dir)
+    (X_train, _), (X_test, y_test) = data.load_data(data_dir, args.data)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     import keras.backend as K
@@ -48,7 +49,7 @@ def _run(logger, args):
 
         # 評価
         gen = generator.Generator(image_size=od.image_size, od=od, base_network=args.network)
-        evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, config.RESULT_DIR)
+        evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, class_names, config.RESULT_DIR)
 
 
 if __name__ == '__main__':

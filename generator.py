@@ -106,25 +106,25 @@ def _check():
     import better_exceptions
     better_exceptions.MAX_LENGTH = 128
 
+    import data
     import pathlib
     from tqdm import tqdm
-    from data_voc import CLASS_NAMES, load_data
     base_dir = pathlib.Path(__file__).parent
     data_dir = base_dir.joinpath('data')
     save_dir = base_dir.joinpath('___generator_check')
     save_dir.mkdir(exist_ok=True)
 
-    (_, _), (X_test, y_test) = load_data(data_dir)
+    (_, _), (X_test, y_test), class_names = data.load_data(data_dir, 'voc')
     X_test = X_test[:1]
     y_test = y_test[:1]
 
-    gen = Generator((512, 512), od=None, preprocess_input=tk.image.preprocess_input_abs1)
+    gen = Generator((512, 512), od=None, base_network='custom')
     for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=128), gen.flow(X_test, y_test, data_augmentation=True)):
         for X, y in zip(X_batch, y_batch):
             X = tk.image.unpreprocess_input_abs1(X)
             tk.ml.plot_objects(
                 X, save_dir.joinpath('{}.png'.format(i)),
-                y.classes, None, y.bboxes, CLASS_NAMES)
+                y.classes, None, y.bboxes, class_names)
 
 
 if __name__ == '__main__':
