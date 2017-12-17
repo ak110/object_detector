@@ -63,10 +63,20 @@ class Generator(tk.image.ImageDataGenerator):
                     if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
                         continue
                     y.bboxes = bboxes / np.tile([pw, ph], 2)
+                # 先に縮小
+                rw = self.image_size[1] / pw
+                rh = self.image_size[0] / ph
+                new_w = int(round(old_w * rw))
+                new_h = int(round(old_h * rh))
+                interp = rand.choice(['nearest', 'lanczos', 'bilinear', 'bicubic'])
+                rgb = tk.ndimage.resize(rgb, new_w, new_h, padding=None, interp=interp)
+                # パディング
+                px = int(round(px * rw))
+                py = int(round(py * rh))
                 padding = rand.choice(('same', 'zero', 'rand'))
-                rgb = tk.ndimage.pad_ltrb(rgb, px, py, pw - old_w - px, ph - old_h - py, padding, rand)
-                assert rgb.shape[1] == pw
-                assert rgb.shape[0] == ph
+                rgb = tk.ndimage.pad_ltrb(rgb, px, py, self.image_size[1] - new_w - px, self.image_size[0] - new_h - py, padding, rand)
+                assert rgb.shape[1] == self.image_size[1]
+                assert rgb.shape[0] == self.image_size[0]
                 break
         else:
             # crop (zoom in)
@@ -105,6 +115,8 @@ def _check():
     """お試しコード。"""
     import better_exceptions
     better_exceptions.MAX_LENGTH = 128
+    import matplotlib
+    matplotlib.use('Agg')
 
     import data
     import pathlib

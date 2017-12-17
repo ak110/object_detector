@@ -53,6 +53,7 @@ def _run(logger, args):
     logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
     sklearn.externals.joblib.dump(od, str(config.RESULT_DIR.joinpath('model.pkl')))
 
+    import keras
     with tk.dl.session():
         gpu_count = tk.get_gpu_count()
         with tk.dl.device(cpu=gpu_count >= 2):
@@ -90,6 +91,7 @@ def _run(logger, args):
         callbacks = []
         callbacks.append(tk.dl.my_callback_factory()(config.RESULT_DIR, lr_list=lr_list))
         callbacks.append(tk.dl.learning_curve_plotter_factory()(config.RESULT_DIR.joinpath('history.{metric}.png'), 'loss'))
+        callbacks.append(keras.callbacks.ModelCheckpoint(str(config.RESULT_DIR.joinpath('model.h5')), save_weights_only=True, period=16, verbose=1))
 
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=batch_size, data_augmentation=True, shuffle=True),
