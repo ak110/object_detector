@@ -6,17 +6,16 @@
 """
 import argparse
 import pathlib
-import sys
 import time
 
 import numpy as np
 import sklearn.externals.joblib
 
 import config
+import data_voc
 import generator
 import models
 import pytoolkit as tk
-import voc_data
 
 
 def _main():
@@ -30,7 +29,7 @@ def _main():
     args = parser.parse_args()
 
     start_time = time.time()
-    logger = tk.create_tee_logger(config.LOG_PATH)
+    logger = tk.create_tee_logger(config.RESULT_DIR.joinpath(pathlib.Path(__file__).stem + '.log'), fmt=None)
     _run(logger, args)
     elapsed_time = time.time() - start_time
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -39,11 +38,11 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, y_train), (X_test, y_test) = voc_data.load_data(data_dir)
+    (X_train, y_train), (X_test, y_test) = data_voc.load_data(data_dir)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(voc_data.CLASS_NAMES), y_train)
+    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(data_voc.CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
@@ -79,12 +78,11 @@ def _run(logger, args):
         # 学習率の決定：
         # ・CIFARやImageNetの分類では
         #   lr 0.1～0.5、batch size 64～256くらいが多いのでその辺を基準に。
-        # ・バッチサイズのsqrtに比例させると良さそう
-        #   (cf. https://www.slideshare.net/JiroNishitoba/20170629)
+        # ・バッチサイズに比例させると良さそう？
         # ・lossが分類＋回帰×4＋回帰なので、とりあえず1 / 3倍にしてみる。(怪)
         # epoch数：
         # ・指定値 // 2 + 指定値 // 4 + 指定値 // 4。
-        base_lr = 1e-1 / 3 * np.sqrt(batch_size) / np.sqrt(128)
+        base_lr = 1e-1 / 3 * (batch_size / 128)
         lr_list = [base_lr] * (args.epochs // 2) + [base_lr / 10] * (args.epochs // 4) + [base_lr / 100] * (args.epochs // 4)
         epochs = len(lr_list)
 

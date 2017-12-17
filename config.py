@@ -6,12 +6,12 @@ import better_exceptions
 import matplotlib as mpl
 
 mpl.use('Agg')
+import matplotlib.pyplot as plt
+
 better_exceptions.MAX_LENGTH = 128
 
-SCRIPT_PATH = pathlib.Path(__file__).resolve()
-BASE_DIR = SCRIPT_PATH.parent
+BASE_DIR = pathlib.Path(__file__).resolve().parent
 RESULT_DIR = BASE_DIR.joinpath('results')
-LOG_PATH = RESULT_DIR.joinpath(SCRIPT_PATH.stem + '.log')
 
 # 念のため(?)resultsフォルダを作っちゃう
 RESULT_DIR.mkdir(parents=True, exist_ok=True)

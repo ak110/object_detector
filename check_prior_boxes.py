@@ -7,10 +7,10 @@ import time
 import numpy as np
 
 import config
+import data_voc
 import evaluation
 import models
 import pytoolkit as tk
-import voc_data
 
 
 def _main():
@@ -21,7 +21,7 @@ def _main():
     args = parser.parse_args()
 
     start_time = time.time()
-    logger = tk.create_tee_logger(config.LOG_PATH)
+    logger = tk.create_tee_logger(config.RESULT_DIR.joinpath(pathlib.Path(__file__).stem + '.log'), fmt=None)
     _run(logger, args)
     elapsed_time = time.time() - start_time
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -30,18 +30,18 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, y_train), (X_test, y_test) = voc_data.load_data(data_dir)
+    (X_train, y_train), (X_test, y_test) = data_voc.load_data(data_dir)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     # 訓練データからパラメータを適当に決める。
-    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(voc_data.CLASS_NAMES), y_train)
+    od = models.ObjectDetector.create(args.input_size, args.map_sizes, len(data_voc.CLASS_NAMES), y_train)
     logger.debug('mean objects / image = %f', od.mean_objets)
     logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
     # prior boxのカバー度合いのチェック
-    od.check_prior_boxes(logger, config.RESULT_DIR, y_test, voc_data.CLASS_NAMES)
+    od.check_prior_boxes(logger, config.RESULT_DIR, y_test, data_voc.CLASS_NAMES)
 
     # ついでに、試しに回答を出力してみる
     check_true_size = 32

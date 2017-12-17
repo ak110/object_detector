@@ -1,15 +1,15 @@
 """データのGenerator。"""
 import numpy as np
 
+import model_net
+import models
 import pytoolkit as tk
-from model import ObjectDetector
-from model_net import get_preprocess_input
 
 
 class Generator(tk.image.ImageDataGenerator):
     """データのGenerator。"""
 
-    def __init__(self, image_size, od: ObjectDetector, preprocess_input=get_preprocess_input()):
+    def __init__(self, image_size, od: models.ObjectDetector, preprocess_input=model_net.get_preprocess_input()):
         self.od = od
         super().__init__(image_size, preprocess_input=preprocess_input)
         self.add(0.5, tk.image.RandomErasing())
@@ -108,7 +108,7 @@ def _check():
 
     import pathlib
     from tqdm import tqdm
-    from voc_data import CLASS_NAMES, load_data
+    from data_voc import CLASS_NAMES, load_data
     base_dir = pathlib.Path(__file__).parent
     data_dir = base_dir.joinpath('data')
     save_dir = base_dir.joinpath('___generator_check')

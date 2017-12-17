@@ -8,10 +8,10 @@ import numpy as np
 import sklearn.externals.joblib
 
 import config
+import data_voc
 import evaluation
 import generator
 import pytoolkit as tk
-import voc_data
 
 
 def _main():
@@ -21,7 +21,7 @@ def _main():
     args = parser.parse_args()
 
     start_time = time.time()
-    logger = tk.create_tee_logger(config.LOG_PATH)
+    logger = tk.create_tee_logger(config.RESULT_DIR.joinpath(pathlib.Path(__file__).stem + '.log'), fmt=None)
     _run(logger, args)
     elapsed_time = time.time() - start_time
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -30,7 +30,7 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, _), (X_test, y_test) = voc_data.load_data(data_dir)
+    (X_train, _), (X_test, y_test) = data_voc.load_data(data_dir)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     import keras.backend as K

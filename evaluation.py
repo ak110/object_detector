@@ -7,7 +7,7 @@ import sklearn.externals.joblib as joblib
 from tqdm import tqdm
 
 import pytoolkit as tk
-from voc_data import CLASS_NAMES
+from data_voc import CLASS_NAMES
 
 
 def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, result_dir):
