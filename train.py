@@ -29,6 +29,7 @@ def _main():
     parser.add_argument('--network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
+    parser.add_argument('--no-lr-decay', help='learning rateを減衰させない。epochs // 2で停止する。', action='store_true', default=False)
     args = parser.parse_args()
 
     start_time = time.time()
@@ -85,7 +86,10 @@ def _run(logger, args):
         # epoch数：
         # ・指定値 // 2 + 指定値 // 4 + 指定値 // 4。
         base_lr = 0.5 / 6 * (batch_size / 256)
-        lr_list = [base_lr] * (args.epochs // 2) + [base_lr / 10] * (args.epochs // 4) + [base_lr / 100] * (args.epochs // 4)
+        if args.no_lr_decay:
+            lr_list = [base_lr] * (args.epochs // 2)
+        else:
+            lr_list = [base_lr] * (args.epochs // 2) + [base_lr / 10] * (args.epochs // 4) + [base_lr / 100] * (args.epochs // 4)
         epochs = len(lr_list)
 
         callbacks = []

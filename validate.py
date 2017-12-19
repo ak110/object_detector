@@ -17,7 +17,7 @@ import pytoolkit as tk
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', help='データの種類。', default='voc', choices=['voc', 'pkl'])
-    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(base_dir.joinpath('data')))  # sambaの問題のためのwork around...
+    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.BASE_DIR.joinpath('data')))  # sambaの問題のためのwork around...
     parser.add_argument('--network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
@@ -32,7 +32,7 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     data_dir = pathlib.Path(args.data_dir)
-    (X_train, _), (X_test, y_test) = data.load_data(data_dir, args.data)
+    (X_train, _), (X_test, y_test), class_names = data.load_data(data_dir, args.data)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
     import keras.backend as K
