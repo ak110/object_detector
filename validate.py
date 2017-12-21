@@ -35,13 +35,11 @@ def _run(logger, args):
     (X_train, _), (X_test, y_test), class_names = data.load_data(data_dir, args.data)
     logger.debug('train, test = %d, %d', len(X_train), len(X_test))
 
-    import keras.backend as K
-    K.set_image_dim_ordering('tf')
     with tk.dl.session():
         # モデルの読み込み
         od = sklearn.externals.joblib.load(str(config.RESULT_DIR.joinpath('model.pkl')))
         model, _ = od.create_network(args.network)
-        model.load_weights(str(config.RESULT_DIR.joinpath('model.h5')), by_name=True)
+        model.load_weights(str(config.RESULT_DIR.joinpath('model.h5')))
 
         # マルチGPU対応
         logger.debug('gpu count = %d', tk.get_gpu_count())
