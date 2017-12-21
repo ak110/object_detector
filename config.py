@@ -3,15 +3,12 @@ import os
 import pathlib
 
 import better_exceptions
-import matplotlib as mpl
 
-mpl.use('Agg')
-import matplotlib.pyplot as plt
-
-better_exceptions.MAX_LENGTH = 128
+better_exceptions.MAX_LENGTH = 100
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
-RESULT_DIR = BASE_DIR.joinpath('results')
+DATA_DIR = BASE_DIR / 'data'
+RESULT_DIR = BASE_DIR / 'results'
 
 # 念のため(?)resultsフォルダを作っちゃう
 RESULT_DIR.mkdir(parents=True, exist_ok=True)

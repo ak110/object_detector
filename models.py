@@ -19,7 +19,7 @@ class ObjectDetector(object):
     """
 
     @classmethod
-    def create(cls, input_size, map_sizes, nb_classes, y_train, pb_size_pattern_count=8):
+    def create(cls, base_network, input_size, map_sizes, nb_classes, y_train, pb_size_pattern_count=8):
         """訓練データからパラメータを適当に決めてインスタンスを作成する。
 
         gridに配置したときのIOUを直接最適化するのは難しそうなので、
@@ -56,9 +56,10 @@ class ObjectDetector(object):
         pb_size_patterns = cluster.fit(bboxes_size_patterns).cluster_centers_
         assert pb_size_patterns.shape == (pb_size_pattern_count, 2)
 
-        return cls(input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns)
+        return cls(base_network, input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns)
 
-    def __init__(self, input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns):
+    def __init__(self, base_network, input_size, map_sizes, nb_classes, mean_objets, pb_size_patterns):
+        self.base_network = base_network
         self.image_size = (input_size, input_size)
         self.map_sizes = np.array(map_sizes)
         self.nb_classes = nb_classes
@@ -266,20 +267,20 @@ class ObjectDetector(object):
         # ヒストグラム色々を出力
         import matplotlib.pyplot as plt
         plt.hist(unrec_widths, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('unrec_widths.hist.png')))
+        plt.gcf().savefig(str(result_dir / 'unrec_widths.hist.png'))
         plt.close()
         plt.hist(unrec_heights, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('unrec_heights.hist.png')))
+        plt.gcf().savefig(str(result_dir / 'unrec_heights.hist.png'))
         plt.close()
         plt.xscale('log')
         plt.hist(unrec_ars, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('unrec_ars.hist.png')))
+        plt.gcf().savefig(str(result_dir / 'unrec_ars.hist.png'))
         plt.close()
         plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('rec_mean_abs_delta.hist.png')))
+        plt.gcf().savefig(str(result_dir / 'rec_mean_abs_delta.hist.png'))
         plt.close()
         plt.hist(assigned_count_list, bins=32)
-        plt.gcf().savefig(str(result_dir.joinpath('assigned_count.hist.png')))
+        plt.gcf().savefig(str(result_dir / 'assigned_count.hist.png'))
         plt.close()
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
@@ -525,9 +526,13 @@ class ObjectDetector(object):
         acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
         return K.sum(acc * obj_mask, axis=-1) / obj_count
 
-    def create_network(self, base_network='resnet50'):
+    def get_preprocess_input(self):
+        """preprecess_inputを返す。"""
+        return model_net.get_preprocess_input(self.base_network)
+
+    def create_network(self):
         """ネットワークの作成"""
-        return model_net.create_network(self, base_network)
+        return model_net.create_network(self, self.base_network)
 
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""

@@ -31,13 +31,13 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, class_na
             # TODO: assignでmaxのみ取ってきたい
             # 先頭部分のみ可視化
             if i == 0:
-                save_dir = result_dir.joinpath('___check')
+                save_dir = result_dir / '___check'
                 for j, (pcl, pcf, pl) in enumerate(zip(pred_classes, pred_confs, pred_locs)):
                     mask = pcf >= 0.5  # 表示はある程度絞る (mAP算出のためには片っ端からリストアップしているため)
                     if not mask.any():
                         mask = [pcf.argmax()]  # 最低1つは出力
                     tk.ml.plot_objects(
-                        X_test[j], save_dir.joinpath(pathlib.Path(X_test[j]).name + '.png'),
+                        X_test[j], save_dir / (pathlib.Path(X_test[j]).name + '.png'),
                         pcl[mask], pcf[mask], pl[mask], class_names)
             # 次へ
             pbar.update(len(X_batch))
@@ -63,5 +63,5 @@ def plot_truth(X_test, y_test, class_names, save_dir):
     """正解データの画像化。"""
     for X, y in zip(X_test, y_test):
         tk.ml.plot_objects(
-            X, save_dir.joinpath(pathlib.Path(X).name + '.png'),
+            X, save_dir / (pathlib.Path(X).name + '.png'),
             y.classes, None, y.bboxes, class_names)

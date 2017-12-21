@@ -1,7 +1,6 @@
 """データのGenerator。"""
 import numpy as np
 
-import model_net
 import models
 import pytoolkit as tk
 
@@ -9,9 +8,9 @@ import pytoolkit as tk
 class Generator(tk.image.ImageDataGenerator):
     """データのGenerator。"""
 
-    def __init__(self, image_size, od: models.ObjectDetector, base_network: str):
+    def __init__(self, image_size, preprocess_input, od: models.ObjectDetector):
         self.od = od
-        super().__init__(image_size, preprocess_input=model_net.get_preprocess_input(base_network))
+        super().__init__(image_size, grayscale=False, preprocess_input=preprocess_input)
         self.add(0.5, tk.image.RandomErasing())
         self.add(1.0, tk.image.RandomErasing(object_aware=True, object_aware_prob=0.5))
         self.add(0.25, tk.image.RandomBlur())
@@ -113,29 +112,27 @@ class Generator(tk.image.ImageDataGenerator):
 
 def _check():
     """お試しコード。"""
-    import better_exceptions
-    better_exceptions.MAX_LENGTH = 128
     import matplotlib
     matplotlib.use('Agg')
 
-    import data
-    import pathlib
     from tqdm import tqdm
-    base_dir = pathlib.Path(__file__).parent
-    data_dir = base_dir.joinpath('data')
-    save_dir = base_dir.joinpath('___generator_check')
+
+    import config
+    import data
+
+    save_dir = config.BASE_DIR / '___generator_check'
     save_dir.mkdir(exist_ok=True)
 
-    (_, _), (X_test, y_test), class_names = data.load_data(data_dir, 'voc')
+    (_, _), (X_test, y_test), class_names = data.load_data(config.DATA_DIR, 'voc')
     X_test = X_test[:1]
     y_test = y_test[:1]
 
-    gen = Generator((512, 512), od=None, base_network='custom')
-    for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=128), gen.flow(X_test, y_test, data_augmentation=True)):
+    gen = Generator((512, 512), od=None, preprocess_input=tk.image.preprocess_input_abs1)
+    for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=100), gen.flow(X_test, y_test, data_augmentation=True)):
         for X, y in zip(X_batch, y_batch):
             X = tk.image.unpreprocess_input_abs1(X)
             tk.ml.plot_objects(
-                X, save_dir.joinpath('{}.png'.format(i)),
+                X, save_dir / '{}.png'.format(i),
                 y.classes, None, y.bboxes, class_names)
 
 
