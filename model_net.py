@@ -48,9 +48,9 @@ def _create_basenet(od, x, base_network):
 
     lr_multipliers = {}
     if base_network == 'custom':
-        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)  # 160x160
+        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
         x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
-        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)  # 80x80
+        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
         x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
         ref_list.append(x)
     elif base_network == 'vgg16':
@@ -245,7 +245,7 @@ def _pm_center(od, x, prefix):
     import keras
     from keras.regularizers import l2
     x = keras.layers.Flatten()(x)
-    x = keras.layers.Dense(64, kernel_initializer='he_uniform', name=prefix + '_fc')(x)
+    x = keras.layers.Dense(64, use_bias=False, kernel_initializer='he_uniform', name=prefix + '_fc')(x)
     x = keras.layers.BatchNormalization(name=prefix + '_fc_bn')(x)
     x = keras.layers.Activation(activation='elu', name=prefix + '_fc_act')(x)
     conf = keras.layers.Dense(od.nb_classes,
@@ -259,12 +259,11 @@ def _pm_center(od, x, prefix):
                              kernel_regularizer=l2(1e-4),
                              bias_regularizer=l2(1e-4),  # 平均的には≒0のはず
                              name=prefix + '_loc')(x)
-    mix = keras.layers.Concatenate(name=prefix + '_mix')([x, conf, loc])
     iou = keras.layers.Dense(1,
                              kernel_initializer='zeros',
                              kernel_regularizer=l2(1e-4),
                              activation='sigmoid',
-                             name=prefix + '_iou')(mix)
+                             name=prefix + '_iou')(x)
     conf = keras.layers.Reshape((1, od.nb_classes), name=prefix + '_reshape_conf')(conf)
     loc = keras.layers.Reshape((1, 4), name=prefix + '_reshape_loc')(loc)
     iou = keras.layers.Reshape((1, 1), name=prefix + '_reshape_iou')(iou)
