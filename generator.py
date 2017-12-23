@@ -25,8 +25,8 @@ class Generator(tk.image.ImageDataGenerator):
         self.add(0.5, tk.image.RandomContrast())
         self.add(0.5, tk.image.RandomHue())
 
-    def _load(self, x, y, w, data_augmentation, seed):
-        rgb, y, w = super()._load(x, y, w, data_augmentation, seed)
+    def generate(self, ix, seed, rgb, y_, w_, data_augmentation):
+        rgb, y, w = super().generate(ix, seed, rgb, y_, w_, data_augmentation)
 
         if self.od is not None and y is not None:
             y = self.od.encode_truth([y])[0]
@@ -118,14 +118,15 @@ def _check():
     from tqdm import tqdm
 
     import config
-    import data
 
     save_dir = config.BASE_DIR / '___generator_check'
     save_dir.mkdir(exist_ok=True)
 
-    (_, _), (X_test, y_test), class_names = data.load_data(config.DATA_DIR, 'voc')
-    X_test = X_test[:1]
+    class_names = ['bg'] + tk.ml.VOC_CLASS_NAMES
+    class_name_to_id = {n: i for i, n in enumerate(class_names)}
+    y_test = tk.ml.ObjectsAnnotation.load_voc(config.DATA_DIR, 2007, 'test', class_name_to_id)
     y_test = y_test[:1]
+    X_test = tk.ml.ObjectsAnnotation.get_path_list(config.DATA_DIR, y_test)
 
     gen = Generator((512, 512), od=None, preprocess_input=tk.image.preprocess_input_abs1)
     for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=100), gen.flow(X_test, y_test, data_augmentation=True)):
