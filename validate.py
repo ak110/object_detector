@@ -20,7 +20,7 @@ def _main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.DATA_DIR))  # sambaの問題のためのwork around...
-    parser.add_argument('--data-type', help='データの種類。', default='voc', choices=['voc', 'csv'])
+    parser.add_argument('--data-type', help='データの種類。', default='pkl', choices=['voc', 'csv', 'pkl'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
