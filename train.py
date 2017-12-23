@@ -24,7 +24,10 @@ def _main():
     args = parser.parse_args()
 
     start_time = time.time()
-    logger = tk.create_tee_logger(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log'), fmt=None) if hvd.rank() == 0 else tk.get_logger()
+    logger = tk.log.get()
+    if hvd.rank() == 0:
+        logger.addHandler(tk.log.stream_handler())
+        logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
     _run(logger, args)
     elapsed_time = time.time() - start_time
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
@@ -47,8 +50,9 @@ def _run(logger, args):
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         model, lr_multipliers = od.create_network()
         if hvd.rank() == 0:
-            model.summary(print_fn=logger.debug)
-            logger.debug('network depth: %d', tk.dl.count_network_depth(model))
+            with (config.RESULT_DIR / 'network.txt').open('w') as f:
+                model.summary(print_fn=lambda x: f.write(x + '\n'))
+        logger.debug('network depth: %d', tk.dl.count_network_depth(model))
 
         # 学習済み重みの読み込み
         base_model_path = config.RESULT_DIR / 'model.base.h5'

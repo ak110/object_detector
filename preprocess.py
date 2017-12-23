@@ -27,7 +27,9 @@ def _main():
     args = parser.parse_args()
 
     start_time = time.time()
-    logger = tk.create_tee_logger(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log'), fmt=None)
+    logger = tk.log.get()
+    logger.addHandler(tk.log.stream_handler())
+    logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
     _run(logger, args)
     elapsed_time = time.time() - start_time
     logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
