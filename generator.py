@@ -124,7 +124,7 @@ def _check():
 
     class_names = ['bg'] + tk.ml.VOC_CLASS_NAMES
     class_name_to_id = {n: i for i, n in enumerate(class_names)}
-    y_test = tk.ml.ObjectsAnnotation.load_voc(config.DATA_DIR, 2007, 'test', class_name_to_id)
+    y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(config.DATA_DIR, class_name_to_id)
     y_test = y_test[:1]
     X_test = tk.ml.ObjectsAnnotation.get_path_list(config.DATA_DIR, y_test)
 

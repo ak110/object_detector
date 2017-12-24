@@ -81,8 +81,9 @@ def _run(logger, args):
         callbacks.append(hvd.callbacks.MetricAverageCallback())
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
-            callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'history.tsv'))
             callbacks.append(keras.callbacks.ModelCheckpoint(str(config.RESULT_DIR / 'model.h5'), period=16, verbose=1))
+            callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'history.tsv'))
+            callbacks.append(tk.dl.logger_callback())
 
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=args.batch_size, data_augmentation=True, shuffle=True),

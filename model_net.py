@@ -89,7 +89,7 @@ def _create_basenet(od, x, base_network):
     while True:
         x, map_size = _downblock(x)
         ref_list.append(x)
-        if map_size <= 6 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
+        if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
             break
 
     ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}

@@ -30,7 +30,8 @@ def load_data_voc(data_dir: pathlib.Path):
     """データの読み込み"""
     class_names = ['bg'] + tk.ml.VOC_CLASS_NAMES
     class_name_to_id = {n: i for i, n in enumerate(class_names)}
-    y_train, y_test = tk.ml.ObjectsAnnotation.load_voc_0712(data_dir, class_name_to_id, without_difficult=True)
+    y_train = tk.ml.ObjectsAnnotation.load_voc_0712_trainval(data_dir, class_name_to_id, without_difficult=True)
+    y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(data_dir, class_name_to_id)
     return y_train, y_test, class_names
 
 
