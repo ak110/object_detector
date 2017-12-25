@@ -67,7 +67,7 @@ def _run(logger, args):
         base_lr = 0.5 / 3 * (args.batch_size / 256) * hvd.size()
 
         opt = tk.dl.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
-        opt = hvd.DistributedOptimizer(opt)
+        opt = hvd.DistributedOptimizer(opt, device_dense='/cpu:0')
         model.compile(opt, od.loss, od.metrics)
 
         gen = generator.Generator(od.image_size, od.get_preprocess_input(), od)
@@ -77,8 +77,8 @@ def _run(logger, args):
             args.epochs //= 2
         else:
             callbacks.append(tk.dl.learning_rate_callback(lr=base_lr, epochs=args.epochs))
-        callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
-        callbacks.append(hvd.callbacks.MetricAverageCallback())
+        callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0, '/cpu:0'))
+        callbacks.append(hvd.callbacks.MetricAverageCallback('/cpu:0'))
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
             callbacks.append(keras.callbacks.ModelCheckpoint(str(config.RESULT_DIR / 'model.h5'), period=16, verbose=1))
