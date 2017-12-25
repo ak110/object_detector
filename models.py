@@ -239,29 +239,29 @@ class ObjectDetector(object):
         cr = sklearn.metrics.classification_report(y_true, y_pred, target_names=class_names)
 
         # ログ出力
-        logger.debug(cr)
-        logger.debug('assigned counts:')
+        logger.info(cr)
+        logger.info('assigned counts:')
         for i, c in enumerate(assigned_counts):
-            logger.debug('  prior boxes{m=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
+            logger.info('  prior boxes{m=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
                          self.pb_info[i]['map_size'],
                          self.pb_info[i]['size'],
                          self.pb_info[i]['aspect_ratio'],
                          c, 100 * c / self.pb_info[i]['count'] / total_gt_boxes)
-        logger.debug('total errors: %d / %d (%.02f%%)',
+        logger.info('total errors: %d / %d (%.02f%%)',
                      total_errors, total_gt_boxes, 100 * total_errors / total_gt_boxes)
         # iou < 0.5の出現率
-        logger.debug('[iou < 0.5] count: %d / %d (%.02f%%)',
+        logger.info('[iou < 0.5] count: %d / %d (%.02f%%)',
                      len(unrec_widths), len(y_test), 100 * len(unrec_widths) / len(y_test))
         # YOLOv2の論文のTable 1相当の値のつもり (複数のprior boxに割り当てたときの扱いがちょっと違いそう)
-        logger.debug('Avg IOU: %.1f', np.mean(iou_list) * 100)
+        logger.info('Avg IOU: %.1f', np.mean(iou_list) * 100)
         # 1画像あたり何件のprior boxにassignされたか
-        logger.debug('assigned count per image: mean=%.1f std=%.2f min=%d max=%d',
+        logger.info('assigned count per image: mean=%.1f std=%.2f min=%d max=%d',
                      np.mean(assigned_count_list), np.std(assigned_count_list),
                      min(assigned_count_list), max(assigned_count_list))
         # Δlocの分布調査
         # mean≒0, std≒1とかくらいが学習しやすいはず。(SSDを真似た謎の0.1で大体そうなってる)
         delta_locs = np.concatenate(rec_delta_locs)
-        logger.debug('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
+        logger.info('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
                      delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
 
         # ヒストグラム色々を出力

@@ -56,7 +56,7 @@ def evaluate(logger, od, model, gen, X_test, y_test, batch_size, epoch, class_na
 
     sys.stdout.flush()
     sys.stderr.flush()
-    logger.debug('epoch={:2d} mAP={:.4f} mAP(VOC2007)={:.4f}'.format(epoch + 1, map1, map2))
+    logger.info('epoch={:2d} mAP={:.4f} mAP(VOC2007)={:.4f}'.format(epoch + 1, map1, map2))
 
 
 def plot_truth(X_test, y_test, class_names, save_dir):

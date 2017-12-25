@@ -36,15 +36,15 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     (X_train, y_train), (X_test, y_test), _ = data.load_data(config.DATA_DIR, 'pkl')
-    logger.debug('train, test = %d, %d', len(X_train), len(X_test))
+    logger.info('train, test = %d, %d', len(X_train), len(X_test))
 
     # モデルの読み込み
     od = sklearn.externals.joblib.load(str(config.RESULT_DIR / 'model.pkl'))  # type: models.ObjectDetector
-    logger.debug('mean objects / image = %f', od.mean_objets)
-    logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
-    logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
-    logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
+    logger.info('mean objects / image = %f', od.mean_objets)
+    logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
+    logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
+    logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
+    logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
     import keras
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
@@ -52,13 +52,13 @@ def _run(logger, args):
         if hvd.rank() == 0:
             with (config.RESULT_DIR / 'network.txt').open('w') as f:
                 model.summary(print_fn=lambda x: f.write(x + '\n'))
-        logger.debug('network depth: %d', tk.dl.count_network_depth(model))
+        logger.info('network depth: %d', tk.dl.count_network_depth(model))
 
         # 学習済み重みの読み込み
         base_model_path = config.RESULT_DIR / 'model.base.h5'
         if base_model_path.is_file():
             tk.dl.load_weights(model, base_model_path)
-            logger.debug('warm start: %s', base_model_path.name)
+            logger.info('warm start: %s', base_model_path.name)
 
         # 学習率：
         # ・CIFARなどの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。

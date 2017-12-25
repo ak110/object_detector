@@ -36,7 +36,7 @@ def _main():
 def _run(logger, args):
     # データの読み込み
     (X_train, _), (X_test, y_test), class_names = data.load_data(args.data_dir, args.data_type)
-    logger.debug('train, test = %d, %d', len(X_train), len(X_test))
+    logger.info('train, test = %d, %d', len(X_train), len(X_test))
 
     with tk.dl.session():
         # モデルの読み込み
@@ -44,7 +44,7 @@ def _run(logger, args):
         model, _ = od.create_network()
         model.load_weights(str(config.RESULT_DIR / 'model.h5'))
         # マルチGPU対応
-        logger.debug('gpu count = %d', tk.get_gpu_count())
+        logger.info('gpu count = %d', tk.get_gpu_count())
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
         # 評価

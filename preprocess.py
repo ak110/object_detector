@@ -37,24 +37,24 @@ def _main():
 
 def _run(logger, args):
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
-    logger.debug('データの読み込み: data-dir=%s data-type=%s', args.data_dir, args.data_type)
+    logger.info('データの読み込み: data-dir=%s data-type=%s', args.data_dir, args.data_type)
     (_, y_train), (X_test, y_test), class_names = data.load_data(args.data_dir, args.data_type)
     sklearn.externals.joblib.dump(y_train, config.DATA_DIR / 'y_train.pkl')
     sklearn.externals.joblib.dump(y_test, config.DATA_DIR / 'y_test.pkl')
     sklearn.externals.joblib.dump(class_names, config.DATA_DIR / 'class_names.pkl')
 
     # 訓練データからパラメータを適当に決める
-    logger.debug('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
+    logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
                  args.base_network, args.input_size, args.map_sizes, len(class_names))
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
     sklearn.externals.joblib.dump(od, str(config.RESULT_DIR / 'model.pkl'))
 
     # prior boxのカバー度合いのチェック
-    logger.debug('mean objects / image = %f', od.mean_objets)
-    logger.debug('prior box size ratios = %s', str(od.pb_size_ratios))
-    logger.debug('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
-    logger.debug('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.debug('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
+    logger.info('mean objects / image = %f', od.mean_objets)
+    logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
+    logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
+    logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
+    logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
     od.check_prior_boxes(logger, config.RESULT_DIR, y_test, class_names)
 
     # ついでに、試しに回答を出力してみる
