@@ -48,10 +48,21 @@ def _create_basenet(od, x, base_network):
 
     lr_multipliers = {}
     if base_network == 'custom':
-        x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
-        x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
-        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
-        x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
+        if K.int_shape(x)[1] < 800:  # 仮：そのうち消すかも
+            x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
+            x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
+            x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
+            x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
+        else:
+            x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
+            x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
+            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage2_conv1')(x)
+            x = tk.dl.conv2d(64, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage2_conv2')(x)
+            x = keras.layers.MaxPooling2D(name='stage2_ds')(x)
+            x = tk.dl.conv2d(128, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage3_conv1')(x)
+            x = tk.dl.conv2d(128, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage3_conv2')(x)
+            x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
+            x = _denseblock(x, 32, 4, bottleneck=False, compress=False, name='stage4_block')
         ref_list.append(x)
     elif base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
