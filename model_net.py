@@ -52,7 +52,7 @@ def _create_basenet(od, x, base_network):
             x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
             x = tk.dl.conv2d(64, (3, 3), strides=(1, 1), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage1_conv')(x)
             x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
-            x = _denseblock(x, 64, 3, bottleneck=False, compress=False, name='stage2_block')
+            x = _block(x, 256, name='stage2_block')
         else:
             x = tk.dl.conv2d(32, (7, 7), strides=(2, 2), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage0_ds')(x)
             x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
@@ -62,7 +62,7 @@ def _create_basenet(od, x, base_network):
             x = tk.dl.conv2d(128, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage3_conv1')(x)
             x = tk.dl.conv2d(128, (3, 3), padding='same', activation='elu', kernel_initializer='he_uniform', name='stage3_conv2')(x)
             x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
-            x = _denseblock(x, 32, 4, bottleneck=False, compress=False, name='stage4_block')
+            x = _block(x, 256, name='stage4_block')
         ref_list.append(x)
     elif base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
@@ -112,30 +112,13 @@ def _create_basenet(od, x, base_network):
     return x, ref, lr_multipliers
 
 
-def _denseblock(x, inc_filters, branches, bottleneck, compress, name):
-    import keras
-    import keras.backend as K
-
-    for branch in range(branches):
-        if bottleneck:
-            b = tk.dl.conv2d(inc_filters * 4, (1, 1), padding='same', activation='elu',
-                             kernel_initializer='he_uniform',
-                             name=name + '_b' + str(branch) + '_c1')(x)
-            b = keras.layers.Dropout(0.25)(b)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
-                             kernel_initializer='he_uniform',
-                             name=name + '_b' + str(branch) + '_c2')(b)
-        else:
-            b = keras.layers.Dropout(0.25)(x)
-            b = tk.dl.conv2d(inc_filters * 1, (3, 3), padding='same', activation='elu',
-                             kernel_initializer='he_uniform',
-                             name=name + '_b' + str(branch))(b)
-        x = keras.layers.Concatenate(name=name + '_b' + str(branch) + '_cat')([x, b])
-
-    if compress:
-        x = tk.dl.conv2d(K.int_shape(x)[-1] // 2, (1, 1), padding='same', activation='elu',
-                         kernel_initializer='he_uniform', name=name + '_sq')(x)
-
+def _block(x, filters, name):
+    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='elu',
+                     kernel_initializer='he_uniform',
+                     name=name + '_c1')(x)
+    x = tk.dl.conv2d(filters, (3, 3), padding='same', activation='elu',
+                     kernel_initializer='he_uniform',
+                     name=name + '_c2')(x)
     return x
 
 
@@ -148,13 +131,13 @@ def _downblock(x):
     x = keras.layers.MaxPooling2D(name='down{}_ds'.format(map_size))(x)
     assert K.int_shape(x)[1] == map_size
 
-    x = _denseblock(x, 64, 4, bottleneck=False, compress=True, name='down{}_block'.format(map_size))
+    x = _block(x, 256, name='down{}_block'.format(map_size))
     return x, map_size
 
 
 def _centerblock(x, ref, map_size):
     import keras
-    x = _denseblock(x, 64, 4, bottleneck=False, compress=True, name='center_block')
+    x = _block(x, 256, name='center_block')
     x = keras.layers.AveragePooling2D((map_size, map_size))(x)
     ref['out{}'.format(1)] = x
     return x
@@ -218,12 +201,8 @@ def _pm(od, x, prefix):
     # squeeze
     x = tk.dl.conv2d(64, (1, 1), padding='same', activation='elu',
                      kernel_initializer='he_uniform', name=prefix + '_sq')(x)
-    # DenseBlock
-    for branch in range(4):
-        b = keras.layers.Dropout(0.25, name='{}_c{}_drop'.format(prefix, branch))(x)
-        b = tk.dl.conv2d(32, (3, 3), padding='same', activation='elu',
-                         kernel_initializer='he_uniform', name=prefix + '_c' + str(branch))(b)
-        x = keras.layers.Concatenate(name='{}_c{}_cat'.format(prefix, branch))([x, b])
+    # block
+    x = _block(x, 128, name=prefix + '_block')
     # conf/loc/iou
     conf = tk.dl.conv2d(od.nb_classes, (1, 1), padding='same',
                         kernel_initializer='zeros',
