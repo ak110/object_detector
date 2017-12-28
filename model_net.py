@@ -198,11 +198,6 @@ def _create_pm(od, ref):
 def _pm(od, x, prefix):
     import keras
     from keras.regularizers import l2
-    # squeeze
-    x = tk.dl.conv2d(64, (1, 1), padding='same', activation='elu',
-                     kernel_initializer='he_uniform', name=prefix + '_sq')(x)
-    # block
-    x = _block(x, 128, name=prefix + '_block')
     # conf/loc/iou
     conf = tk.dl.conv2d(od.nb_classes, (1, 1), padding='same',
                         kernel_initializer='zeros',
@@ -235,7 +230,7 @@ def _pm_center(od, x, prefix):
     import keras
     from keras.regularizers import l2
     x = keras.layers.Flatten()(x)
-    x = keras.layers.Dense(64, use_bias=False, kernel_initializer='he_uniform', name=prefix + '_fc')(x)
+    x = keras.layers.Dense(128, use_bias=False, kernel_initializer='he_uniform', name=prefix + '_fc')(x)
     x = keras.layers.BatchNormalization(name=prefix + '_fc_bn')(x)
     x = keras.layers.Activation(activation='elu', name=prefix + '_fc_act')(x)
     conf = keras.layers.Dense(od.nb_classes,
