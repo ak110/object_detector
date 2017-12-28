@@ -49,9 +49,6 @@ def _run(logger, args):
     import keras
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         model, lr_multipliers = od.create_network()
-        if hvd.rank() == 0:
-            with (config.RESULT_DIR / 'network.txt').open('w') as f:
-                model.summary(print_fn=lambda x: f.write(x + '\n'))
         logger.info('network depth: %d', tk.dl.count_network_depth(model))
 
         # 学習済み重みの読み込み
