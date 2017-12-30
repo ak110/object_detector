@@ -50,6 +50,7 @@ def _run(logger, args):
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         model, lr_multipliers = od.create_network()
         logger.info('network depth: %d', tk.dl.count_network_depth(model))
+        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
 
         # 学習済み重みの読み込み
         base_model_path = config.RESULT_DIR / 'model.base.h5'
@@ -77,7 +78,6 @@ def _run(logger, args):
         callbacks.append(hvd.callbacks.MetricAverageCallback())
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
-            callbacks.append(keras.callbacks.ModelCheckpoint(str(config.RESULT_DIR / 'model.h5'), period=16, verbose=1))
             callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'history.tsv'))
             callbacks.append(tk.dl.logger_callback())
 
