@@ -129,7 +129,7 @@ def _downblock(builder, x):
 
     map_size = K.int_shape(x)[1] // 2
 
-    x = keras.layers.MaxPooling2D(name='down{}_ds'.format(map_size))(x)
+    x = builder.conv2d(256, (2, 2), strides=(2, 2), padding='valid', name='down{}_ds'.format(map_size))(x)
     assert K.int_shape(x)[1] == map_size
 
     x = _block(builder, x, 256, name='down{}_block'.format(map_size))
@@ -139,7 +139,7 @@ def _downblock(builder, x):
 def _centerblock(builder, x, ref, map_size):
     import keras
     x = _block(builder, x, 256, name='center_block')
-    x = keras.layers.AveragePooling2D((map_size, map_size))(x)
+    x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)
     ref['out{}'.format(1)] = x
     return x
 
@@ -231,9 +231,6 @@ def _pm_center(od, builder, x, prefix):
     import keras
     from keras.regularizers import l2
     x = keras.layers.Flatten()(x)
-    x = builder.dense(128, use_bias=False, name=prefix + '_fc')(x)
-    x = builder.bn(name=prefix + '_fc_bn')(x)
-    x = builder.act(name=prefix + '_fc_act')(x)
     conf = builder.dense(od.nb_classes,
                          kernel_initializer='zeros',
                          bias_initializer=tk.dl.od_bias_initializer(od.nb_classes),
