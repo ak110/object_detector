@@ -60,8 +60,7 @@ def _run(logger, args):
         # 学習率：
         # ・CIFARなどの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。
         # ・バッチサイズに比例させると良さそう？
-        # ・lossがクラス、位置×4、IoUなので / 3くらいしてみる。(適当)
-        base_lr = 0.5 / 3 * (args.batch_size / 256) * hvd.size()
+        base_lr = 0.5 * (args.batch_size / 256) * hvd.size()
 
         opt = tk.dl.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
         opt = hvd.DistributedOptimizer(opt)
