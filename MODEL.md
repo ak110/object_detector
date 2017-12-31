@@ -2,7 +2,7 @@
 
 ## ネットワーク
 
-ResNet50 + FPN風
+ベースネットワーク(VGG16/ResNet50など) + FPN風
 
 参考にしたもの: [DSSD](https://arxiv.org/abs/1701.06659)、[DSOD](https://arxiv.org/abs/1708.01241)、[FPN](https://arxiv.org/abs/1612.03144)など。
 
@@ -12,17 +12,17 @@ ResNet50 + FPN風
 
 ## 初期化
 
-最後以外はhe_uniform、最後はzeros。 (ほぼ趣味)
+最後以外は `he_uniform` 、最後は `zeros` 。 (ほぼ趣味)
 
 最後をゼロにしておくと学習開始直後がちょっと安定する気がする。
 
 ## Prior box
 
-使用するfeature mapは、40x40 ～ 5x5の4つ。(最後だけ奇数にして残りは2倍ずつにしてみた)
+使用するfeature mapは、40x40 ～ 5x5の4つ + 1x1など。
 
 feature map毎に8種類のprior boxを出力する。
 
-8種類のprior boxのサイズ・アスペクト比は、訓練データから、距離を `1 - IoU` としたKMeansを使用して決める。
+8種類のprior boxのサイズ・アスペクト比は、訓練データからKMeansを使用して決める。
 IoUは重心が一致している想定で算出する。
 ([YOLO9000](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
 
@@ -32,13 +32,13 @@ IoUは重心が一致している想定で算出する。
 
 ## 損失関数：bounding box
 
-L1-smooth loss
+`L1-smooth loss`
 
 `x, y, w, h` ではなく `x1, y1, x2, y2` でやっている。(怪)
 
 ## 損失関数：IoU
 
-binary crossentropy
+`binary crossentropy`
 
 予測結果のboxと答えのboxのIoUを予測(回帰)して、分類のconfidenceと合わせて使用するもの。
 ([自分で考案したつもりがYOLOv1が既にやっていた](https://twitter.com/ak11/status/917901136782278656)。)
