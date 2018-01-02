@@ -19,6 +19,7 @@ class ObjectDetector(object):
     """
 
     @classmethod
+    @tk.log.trace()
     def create(cls, base_network, input_size, map_sizes, nb_classes, y_train, pb_size_pattern_count=8):
         """訓練データからパラメータを適当に決めてインスタンスを作成する。
 
