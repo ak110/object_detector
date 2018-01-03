@@ -3,9 +3,6 @@ import numpy as np
 
 import pytoolkit as tk
 
-# ベースネットワークの種類: custom, vgg16, resnet50, xception
-_BASENET_TYPE = 'resnet50'
-
 
 @tk.log.trace()
 def create_network(od, base_network):

@@ -19,7 +19,7 @@ def _main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
-    parser.add_argument('--batch-size', help='バッチサイズ。', default=12, type=int)
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     parser.add_argument('--no-lr-decay', help='learning rateを減衰させない。epochs // 2で停止する。', action='store_true', default=False)
     args = parser.parse_args()
 
@@ -63,9 +63,10 @@ def _run(logger, args):
         # ・バッチサイズに比例させると良さそう？
         base_lr = 0.5 * (args.batch_size / 256) * hvd.size()
 
-        opt = tk.dl.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
-        opt = hvd.DistributedOptimizer(opt)
-        model.compile(opt, od.loss, od.metrics)
+        with tk.log.trace_scope('model.compile'):
+            opt = tk.dl.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
+            opt = hvd.DistributedOptimizer(opt)
+            model.compile(opt, od.loss, od.metrics)
 
         gen = generator.Generator(od.image_size, od.get_preprocess_input(), od)
 
