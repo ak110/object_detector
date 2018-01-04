@@ -28,7 +28,7 @@ def create_network(od, base_network):
             break
         map_size *= 2
     # prediction module
-    outputs = _create_pm(od, builder, ref)
+    outputs = _create_pm(od, builder, ref, lr_multipliers)
 
     return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
 
@@ -147,7 +147,7 @@ def _upblock(builder, x, ref, map_size):
     in_map_size = K.int_shape(x)[1]
     up_size = map_size // in_map_size
 
-    x = keras.layers.Dropout(0.25)(x)
+    x = keras.layers.Dropout(0.5)(x)
     x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
                          kernel_initializer='zeros',
                          use_bias=False, use_bn=False, use_act=False,
@@ -165,14 +165,27 @@ def _upblock(builder, x, ref, map_size):
 
 
 @tk.log.trace()
-def _create_pm(od, builder, ref):
+def _create_pm(od, builder, ref, lr_multipliers):
     """Prediction module."""
     import keras
+
+    shared_layers = {
+        'conv1': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv1'),
+        'conv2': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv2'),
+    }
+    for layer in shared_layers.values():
+        w = layer.trainable_weights
+        lr_multipliers.update(zip(w, [1 / len(od.map_sizes)] * len(w)))  # 共有部分の学習率調整
 
     confs, locs, ious = [], [], []
     for map_size in od.map_sizes:
         assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
         x = ref['out{}'.format(map_size)]
+
+        x = shared_layers['conv1'](x)
+        x = shared_layers['conv2'](x)
+        x = builder.bn(name='pm{}_bn'.format(map_size))(x)
+        x = builder.act(name='pm{}_act'.format(map_size))(x)
 
         for pat_ix in range(len(od.pb_size_patterns)):
             prefix = 'pm{}-{}'.format(map_size, pat_ix)
