@@ -172,6 +172,8 @@ def _create_pm(od, builder, ref, lr_multipliers):
     shared_layers = {
         'conv1': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv1'),
         'conv2': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv2'),
+        'conv3': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv3'),
+        'conv4': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv4'),
     }
     for layer in shared_layers.values():
         w = layer.trainable_weights
@@ -181,9 +183,14 @@ def _create_pm(od, builder, ref, lr_multipliers):
     for map_size in od.map_sizes:
         assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
         x = ref['out{}'.format(map_size)]
-
+        sc = x
         x = shared_layers['conv1'](x)
         x = shared_layers['conv2'](x)
+        x = keras.layers.Add()([sc, x])
+        sc = x
+        x = shared_layers['conv3'](x)
+        x = shared_layers['conv4'](x)
+        x = keras.layers.Add()([sc, x])
         x = builder.bn(name='pm{}_bn'.format(map_size))(x)
         x = builder.act(name='pm{}_act'.format(map_size))(x)
 
