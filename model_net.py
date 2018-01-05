@@ -52,23 +52,16 @@ def _create_basenet(od, builder, x, base_network):
 
     lr_multipliers = {}
     if base_network == 'custom':
-        if K.int_shape(x)[1] < 800:  # 仮：そのうち消すかも
-            x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
-            x = builder.conv2d(64, (3, 3), strides=(1, 1), name='stage1_conv')(x)
-            x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
-            x = builder.conv2d(256, (3, 3), name='stage2_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name='stage2_conv2')(x)
-        else:
-            x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
-            x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
-            x = builder.conv2d(64, (3, 3), name='stage2_conv1')(x)
-            x = builder.conv2d(64, (3, 3), name='stage2_conv2')(x)
-            x = keras.layers.MaxPooling2D(name='stage2_ds')(x)
-            x = builder.conv2d(128, (3, 3), name='stage3_conv1')(x)
-            x = builder.conv2d(128, (3, 3), name='stage3_conv2')(x)
-            x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
-            x = builder.conv2d(256, (3, 3), name='stage4_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
+        x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
+        x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
+        x = builder.conv2d(64, (3, 3), name='stage2_conv1')(x)
+        x = builder.conv2d(64, (3, 3), name='stage2_conv2')(x)
+        x = keras.layers.MaxPooling2D(name='stage2_ds')(x)
+        x = builder.conv2d(128, (3, 3), name='stage3_conv1')(x)
+        x = builder.conv2d(128, (3, 3), name='stage3_conv2')(x)
+        x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
+        x = builder.conv2d(256, (3, 3), name='stage4_conv1')(x)
+        x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
         ref_list.append(x)
     elif base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
@@ -119,7 +112,6 @@ def _create_basenet(od, builder, x, base_network):
 
 
 def _downblock(builder, x):
-    import keras
     import keras.backend as K
 
     map_size = K.int_shape(x)[1] // 2
@@ -132,7 +124,6 @@ def _downblock(builder, x):
 
 
 def _centerblock(builder, x, ref, map_size):
-    import keras
     x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
     x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
     x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)

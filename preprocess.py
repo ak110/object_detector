@@ -45,7 +45,7 @@ def _run(logger, args):
 
     # 訓練データからパラメータを適当に決める
     logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
-                 args.base_network, args.input_size, args.map_sizes, len(class_names))
+                args.base_network, args.input_size, args.map_sizes, len(class_names))
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
     sklearn.externals.joblib.dump(od, str(config.RESULT_DIR / 'model.pkl'))
 
