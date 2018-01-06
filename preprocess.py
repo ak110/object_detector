@@ -62,6 +62,39 @@ def _run(logger, args):
     evaluation.plot_truth(X_test[:check_true_size], y_test[:check_true_size],
                           class_names, config.RESULT_DIR / '___ground_truth')
 
+    # customの場合、事前学習用データを作成
+    if args.base_network == 'custom':
+        with tk.dl.session():
+            _make_teacher_data()
+
+
+def _make_teacher_data():
+    """事前学習用データの作成。"""
+    import keras
+    from tqdm import tqdm
+    batch_size = 500
+    data_path = config.DATA_DIR / 'cifar100_teacher_pred.pkl'
+    if data_path.is_file():
+        return
+    (X_train, _), (X_test, _) = keras.datasets.cifar100.load_data()
+    X = np.concatenate([X_train, X_test])
+
+    teacher_model = keras.applications.Xception(include_top=False, input_shape=(71, 71, 3))
+    teacher_model, batch_size = tk.dl.create_data_parallel_model(teacher_model, batch_size)
+    gen = tk.image.ImageDataGenerator((71, 71), preprocess_input=keras.applications.xception.preprocess_input)
+    steps = gen.steps_per_epoch(len(X), batch_size)
+
+    pred_list = []
+    with tqdm(total=len(X), desc='make data', ascii=True, ncols=100) as pbar:
+        for i, X_batch in enumerate(gen.flow(X, batch_size=batch_size)):
+            pred_list.append(teacher_model.predict(X_batch))
+            pbar.update(len(X_batch))
+            if i + 1 >= steps:
+                break
+
+    pred_list = np.concatenate(pred_list)
+    sklearn.externals.joblib.dump(pred_list, data_path)
+
 
 if __name__ == '__main__':
     _main()

@@ -531,9 +531,13 @@ class ObjectDetector(object):
         """preprecess_inputを返す。"""
         return model_net.get_preprocess_input(self.base_network)
 
+    def create_pretrain_network(self, image_size):
+        """ネットワークの作成"""
+        return model_net.create_pretrain_network(self, image_size)
+
     def create_network(self):
         """ネットワークの作成"""
-        return model_net.create_network(self, self.base_network)
+        return model_net.create_network(self)
 
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""

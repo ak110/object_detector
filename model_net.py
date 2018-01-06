@@ -5,11 +5,29 @@ import pytoolkit as tk
 
 
 @tk.log.trace()
-def create_network(od, base_network):
+def create_pretrain_network(od, image_size):
+    """事前学習用モデルの作成。"""
+    import keras
+    import keras.backend as K
+    builder = tk.dl.Builder()
+    builder.conv_defaults['kernel_initializer'] = 'he_uniform'
+    builder.dense_defaults['kernel_initializer'] = 'he_uniform'
+    builder.set_default_l2(1e-5)
+
+    x = inputs = keras.layers.Input(image_size + (3,))
+    x, _, lr_multipliers = _create_basenet(od, builder, x)
+    assert K.int_shape(x)[1] == 3
+    assert len(lr_multipliers) == 0
+    x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
+
+    return keras.models.Model(inputs=inputs, outputs=x)
+
+
+@tk.log.trace()
+def create_network(od):
     """モデルの作成。"""
     import keras
     import keras.backend as K
-
     builder = tk.dl.Builder()
     builder.conv_defaults['kernel_initializer'] = 'he_uniform'
     builder.dense_defaults['kernel_initializer'] = 'he_uniform'
@@ -17,7 +35,10 @@ def create_network(od, base_network):
 
     # downsampling (ベースネットワーク)
     x = inputs = keras.layers.Input(od.image_size + (3,))
-    x, ref, lr_multipliers = _create_basenet(od, builder, x, base_network)
+    x, ref, lr_multipliers = _create_basenet(od, builder, x)
+    # 欲しいサイズがちゃんとあるかチェック
+    for map_size in od.map_sizes:
+        assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
     # center
     map_size = K.int_shape(x)[1]
     x = _centerblock(builder, x, ref, map_size)
@@ -43,7 +64,7 @@ def get_preprocess_input(base_network):
 
 
 @tk.log.trace()
-def _create_basenet(od, builder, x, base_network):
+def _create_basenet(od, builder, x):
     """ベースネットワークの作成。"""
     import keras
     import keras.backend as K
@@ -51,7 +72,7 @@ def _create_basenet(od, builder, x, base_network):
     ref_list = []
 
     lr_multipliers = {}
-    if base_network == 'custom':
+    if od.base_network == 'custom':
         x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
         x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
         x = builder.conv2d(64, (3, 3), name='stage2_conv1')(x)
@@ -63,14 +84,14 @@ def _create_basenet(od, builder, x, base_network):
         x = builder.conv2d(256, (3, 3), name='stage4_conv1')(x)
         x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
         ref_list.append(x)
-    elif base_network == 'vgg16':
+    elif od.base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [0.01] * len(w)))
         ref_list.append(basenet.get_layer(name='block4_pool').input)
         ref_list.append(basenet.get_layer(name='block5_pool').input)
-    elif base_network == 'resnet50':
+    elif od.base_network == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
@@ -78,7 +99,7 @@ def _create_basenet(od, builder, x, base_network):
         ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
         ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
         ref_list.append(basenet.get_layer(name='avg_pool').input)
-    elif base_network == 'xception':
+    elif od.base_network == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
         for layer in basenet.layers:
             w = layer.trainable_weights
@@ -103,11 +124,6 @@ def _create_basenet(od, builder, x, base_network):
             break
 
     ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}
-
-    # 欲しいサイズがちゃんとあるかチェック
-    for map_size in od.map_sizes:
-        assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
-
     return x, ref, lr_multipliers
 
 
