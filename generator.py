@@ -7,11 +7,6 @@ import pytoolkit as tk
 
 def create_generator(image_size, preprocess_input, od: models.ObjectDetector):
     """ImageDataGeneratorを作って返す。"""
-    def _process_output(y):
-        if od is not None and y is not None:
-            y = od.encode_truth([y])[0]
-        return y
-
     def _transform(rgb: np.ndarray, y: tk.ml.ObjectsAnnotation, w, rand: np.random.RandomState, ctx: tk.generator.GeneratorContext):
         """変形を伴うAugmentation。"""
         assert ctx is not None
@@ -89,8 +84,12 @@ def create_generator(image_size, preprocess_input, od: models.ObjectDetector):
 
         return rgb, y, w
 
+    def _process_output(y):
+        if od is not None and y is not None:
+            y = od.encode_truth([y])[0]
+        return y
+
     gen = tk.image.ImageDataGenerator()
-    gen.add(tk.image.ProcessOutput(_process_output))
     gen.add(tk.image.CustomAugmentation(_transform, probability=1))
     gen.add(tk.image.Resize(image_size))
     gen.add(tk.image.RandomAugmentors([
@@ -104,6 +103,7 @@ def create_generator(image_size, preprocess_input, od: models.ObjectDetector):
     ]))
     gen.add(tk.image.RandomErasing(probability=0.5))
     gen.add(tk.image.ProcessInput(preprocess_input, batch_axis=True))
+    gen.add(tk.image.ProcessOutput(_process_output))
 
     return gen
 

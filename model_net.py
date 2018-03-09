@@ -132,7 +132,7 @@ def _downblock(builder, x):
 
     map_size = K.int_shape(x)[1] // 2
 
-    x = builder.conv2d(256, (2, 2), strides=(2, 2), padding='valid', name='down{}_ds'.format(map_size))(x)
+    x = builder.conv2d(256, (3, 3), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
     x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
 
     assert K.int_shape(x)[1] == map_size
@@ -152,6 +152,7 @@ def _upblock(builder, x, ref, map_size):
     import keras.backend as K
 
     in_map_size = K.int_shape(x)[1]
+    assert map_size % in_map_size == 0
     up_size = map_size // in_map_size
 
     x = keras.layers.Dropout(0.5)(x)
