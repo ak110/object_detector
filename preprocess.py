@@ -2,7 +2,6 @@
 """前処理。"""
 import argparse
 import pathlib
-import time
 
 import numpy as np
 import sklearn.externals.joblib
@@ -26,15 +25,14 @@ def _main():
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
     args = parser.parse_args()
 
-    start_time = time.time()
     logger = tk.log.get()
     logger.addHandler(tk.log.stream_handler())
     logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
+
     _run(logger, args)
-    elapsed_time = time.time() - start_time
-    logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
+@tk.log.trace()
 def _run(logger, args):
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
     logger.info('データの読み込み: data-dir=%s data-type=%s', args.data_dir, args.data_type)

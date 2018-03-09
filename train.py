@@ -2,7 +2,6 @@
 """ObjectDetectionを適当にやってみるコード。"""
 import argparse
 import pathlib
-import time
 
 import horovod.keras as hvd
 import numpy as np
@@ -23,16 +22,15 @@ def _main():
     parser.add_argument('--no-lr-decay', help='learning rateを減衰させない。epochs // 2で停止する。', action='store_true', default=False)
     args = parser.parse_args()
 
-    start_time = time.time()
     logger = tk.log.get()
     if hvd.rank() == 0:
         logger.addHandler(tk.log.stream_handler())
         logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
+
     _run(logger, args)
-    elapsed_time = time.time() - start_time
-    logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
+@tk.log.trace()
 def _run(logger, args):
     # データの読み込み
     (X_train, y_train), (X_test, y_test), _ = data.load_data(config.DATA_DIR, 'pkl')
@@ -46,7 +44,6 @@ def _run(logger, args):
     logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
-    import keras
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         model, lr_multipliers = od.create_network()
         logger.info('network depth: %d', tk.dl.count_network_depth(model))
@@ -65,26 +62,28 @@ def _run(logger, args):
         # 学習率：
         # ・CIFARなどの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。
         # ・バッチサイズに比例させると良さそう？
-        base_lr = 0.5 * (args.batch_size / 256) * hvd.size()
+        # ・損失関数がconf + loc + iouなのでちょっと調整した方が良さそう？
+        base_lr = 0.5 * (args.batch_size / 256) * hvd.size() / 3
 
         with tk.log.trace_scope('model.compile'):
             opt = tk.dl.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
-            opt = hvd.DistributedOptimizer(opt)
+            opt = hvd.DistributedOptimizer(opt, device_dense='/cpu:0')
             model.compile(opt, od.loss, od.metrics)
 
-        gen = generator.Generator(od.image_size, od.get_preprocess_input(), od)
+        gen = generator.create_generator(od.image_size, od.get_preprocess_input(), od)
 
         callbacks = []
         if args.no_lr_decay:
             args.epochs //= 2
         else:
-            callbacks.append(tk.dl.learning_rate_callback(lr=base_lr, epochs=args.epochs))
+            callbacks.append(tk.dl.learning_rate_callback())
         callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
         callbacks.append(hvd.callbacks.MetricAverageCallback())
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
             callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'history.tsv'))
             callbacks.append(tk.dl.logger_callback())
+        callbacks.append(tk.dl.freeze_bn_callback(0.95))
 
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=args.batch_size, data_augmentation=True, shuffle=True),

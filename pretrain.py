@@ -2,14 +2,12 @@
 """事前学習をしてみるコード。"""
 import argparse
 import pathlib
-import time
 
 import horovod.keras as hvd
 import numpy as np
 import sklearn.externals.joblib
 
 import config
-import generator
 import pytoolkit as tk
 
 
@@ -21,16 +19,15 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=128, type=int)
     args = parser.parse_args()
 
-    start_time = time.time()
     logger = tk.log.get()
     if hvd.rank() == 0:
         logger.addHandler(tk.log.stream_handler())
         logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
+
     _run(logger, args)
-    elapsed_time = time.time() - start_time
-    logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
+@tk.log.trace()
 def _run(logger, args):
     # モデルの読み込み
     od = sklearn.externals.joblib.load(str(config.RESULT_DIR / 'model.pkl'))  # type: models.ObjectDetector
@@ -63,28 +60,33 @@ def _run(logger, args):
             opt = hvd.DistributedOptimizer(opt)
             model.compile(opt, 'mse', ['mae'])
 
-        gen = tk.image.ImageDataGenerator(image_size, preprocess_input=od.get_preprocess_input())
-        gen.add(0.5, tk.image.RandomErasing())
-        gen.add(0.25, tk.image.RandomBlur())
-        gen.add(0.25, tk.image.RandomBlur(partial=True))
-        gen.add(0.25, tk.image.RandomUnsharpMask())
-        gen.add(0.25, tk.image.RandomUnsharpMask(partial=True))
-        gen.add(0.25, tk.image.RandomMedian())
-        gen.add(0.25, tk.image.GaussianNoise())
-        gen.add(0.25, tk.image.GaussianNoise(partial=True))
-        gen.add(0.5, tk.image.RandomSaturation())
-        gen.add(0.5, tk.image.RandomBrightness())
-        gen.add(0.5, tk.image.RandomContrast())
-        gen.add(0.5, tk.image.RandomHue())
+        gen = tk.image.ImageDataGenerator()
+        gen.add(tk.image.RandomFlipLR(probability=0.5))
+        gen.add(tk.image.RandomPadding(probability=1))
+        gen.add(tk.image.RandomRotate(probability=0.5))
+        gen.add(tk.image.RandomCrop(probability=1))
+        gen.add(tk.image.Resize(image_size))
+        gen.add(tk.image.RandomAugmentors([
+            tk.image.RandomBlur(probability=0.5),
+            tk.image.RandomUnsharpMask(probability=0.5),
+            tk.image.GaussianNoise(probability=0.5),
+            tk.image.RandomSaturation(probability=0.5),
+            tk.image.RandomBrightness(probability=0.5),
+            tk.image.RandomContrast(probability=0.5),
+            tk.image.RandomHue(probability=0.5),
+        ]))
+        gen.add(tk.image.RandomErasing(probability=0.5))
+        gen.add(tk.image.ProcessInput(od.get_preprocess_input(), batch_axis=True))
 
         callbacks = []
-        callbacks.append(tk.dl.learning_rate_callback(lr=base_lr, epochs=args.epochs))
+        callbacks.append(tk.dl.learning_rate_callback())
         callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
         callbacks.append(hvd.callbacks.MetricAverageCallback())
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
             callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'pretrain.history.tsv'))
             callbacks.append(tk.dl.logger_callback())
+        callbacks.append(tk.dl.freeze_bn_callback(0.95))
 
         model.fit_generator(
             gen.flow(X_train, y_train, batch_size=args.batch_size, data_augmentation=True, shuffle=True),

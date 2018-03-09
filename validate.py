@@ -2,9 +2,7 @@
 """学習済みモデルで検証してみるコード。"""
 import argparse
 import pathlib
-import time
 
-import numpy as np
 import sklearn.externals.joblib
 
 import config
@@ -24,15 +22,13 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
-    start_time = time.time()
     logger = tk.log.get()
     logger.addHandler(tk.log.stream_handler())
     logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
     _run(logger, args)
-    elapsed_time = time.time() - start_time
-    logger.info('Elapsed time = %d [s]', int(np.ceil(elapsed_time)))
 
 
+@tk.log.trace()
 def _run(logger, args):
     # データの読み込み
     (X_train, _), (X_test, y_test), class_names = data.load_data(args.data_dir, args.data_type)
@@ -48,7 +44,7 @@ def _run(logger, args):
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
         # 評価
-        gen = generator.Generator(od.image_size, od.get_preprocess_input(), od)
+        gen = generator.create_generator(od.image_size, od.get_preprocess_input(), od)
         evaluation.evaluate(logger, od, model, gen, X_test, y_test, batch_size, -1, class_names, config.RESULT_DIR)
 
 

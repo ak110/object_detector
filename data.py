@@ -11,6 +11,7 @@ from tqdm import tqdm
 import pytoolkit as tk
 
 
+@tk.log.trace()
 def load_data(data_dir, data_type: str):
     """データの読み込み"""
     assert data_type in ('voc', 'csv', 'pkl')
