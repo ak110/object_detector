@@ -132,7 +132,7 @@ def _downblock(builder, x):
 
     map_size = K.int_shape(x)[1] // 2
 
-    x = builder.conv2d(256, (3, 3), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
+    x = builder.conv2d(256, (2, 2), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
     x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
 
     assert K.int_shape(x)[1] == map_size
@@ -161,7 +161,7 @@ def _upblock(builder, x, ref, map_size):
                          use_bias=False, use_bn=False, use_act=False,
                          name='up{}_us'.format(map_size))(x)
     t = ref['down{}'.format(map_size)]
-    t = builder.conv2d(256, (1, 1), use_bias=False, use_bn=False, use_act=False, name='up{}_lt'.format(map_size))(t)
+    t = builder.conv2d(256, (1, 1), use_act=False, name='up{}_lt'.format(map_size))(t)
     x = keras.layers.Add(name='up{}_mix'.format(map_size))([x, t])
     x = builder.bn(name='up{}_mix_bn'.format(map_size))(x)
     x = builder.act(name='up{}_mix_act'.format(map_size))(x)
@@ -178,6 +178,7 @@ def _create_pm(od, builder, ref, lr_multipliers):
     import keras
 
     shared_layers = {
+        'conv0': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv0'),
         'conv1': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv1'),
         'conv2': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv2'),
         'conv3': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv3'),
@@ -191,6 +192,7 @@ def _create_pm(od, builder, ref, lr_multipliers):
     for map_size in od.map_sizes:
         assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
         x = ref['out{}'.format(map_size)]
+        x = shared_layers['conv0'](x)
         sc = x
         x = shared_layers['conv1'](x)
         x = shared_layers['conv2'](x)
