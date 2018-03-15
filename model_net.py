@@ -86,24 +86,18 @@ def _create_basenet(od, builder, x):
         ref_list.append(x)
     elif od.base_network == 'vgg16':
         basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
-        for layer in basenet.layers:
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [0.01] * len(w)))
+        _freeze(basenet, 'block5_conv1')
         ref_list.append(basenet.get_layer(name='block4_pool').input)
         ref_list.append(basenet.get_layer(name='block5_pool').input)
     elif od.base_network == 'resnet50':
         basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
-        for layer in basenet.layers:
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [0.01] * len(w)))
+        _freeze(basenet, 'res4f_branch2a')
         ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
         ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
         ref_list.append(basenet.get_layer(name='avg_pool').input)
     elif od.base_network == 'xception':
         basenet = keras.applications.Xception(include_top=False, input_tensor=x)
-        for layer in basenet.layers:
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [0.01] * len(w)))
+        _freeze(basenet, 'block10_sepconv1_act')
         ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
         ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
         ref_list.append(basenet.get_layer(name='block14_sepconv2_act').output)
@@ -125,6 +119,15 @@ def _create_basenet(od, builder, x):
 
     ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}
     return x, ref, lr_multipliers
+
+
+def _freeze(model, freeze_end_layer):
+    import keras
+    for layer in model.layers:
+        if layer.name == freeze_end_layer:
+            break
+        if not isinstance(layer, keras.layers.BatchNormalization):
+            layer.trainable = False
 
 
 def _downblock(builder, x):
