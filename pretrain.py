@@ -5,7 +5,6 @@ import pathlib
 
 import better_exceptions
 import horovod.keras as hvd
-import numpy as np
 import sklearn.externals.joblib as joblib
 
 import models
