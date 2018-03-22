@@ -1,11 +1,12 @@
 """ObjectDetectionのモデル。"""
+import pathlib
+
 import numpy as np
 import sklearn.cluster
 import sklearn.externals.joblib as joblib
 import sklearn.metrics
 from tqdm import tqdm
 
-import model_net
 import pytoolkit as tk
 
 _VAR_LOC = 0.2  # SSD風適当スケーリング
@@ -528,17 +529,398 @@ class ObjectDetector(object):
         return K.sum(acc * obj_mask, axis=-1) / obj_count
 
     def get_preprocess_input(self):
-        """preprecess_inputを返す。"""
-        return model_net.get_preprocess_input(self.base_network)
+        """`preprocess_input`を返す。"""
+        if self.base_network in ('vgg16', 'resnet50'):
+            return tk.image.preprocess_input_mean
+        else:
+            assert self.base_network in ('custom', 'xception')
+            return tk.image.preprocess_input_abs1
 
+    @tk.log.trace()
     def create_pretrain_network(self, image_size):
-        """ネットワークの作成"""
-        return model_net.create_pretrain_network(self, image_size)
+        """事前学習用モデルの作成。"""
+        import keras
+        import keras.backend as K
+        builder = tk.dl.Builder()
+        builder.conv_defaults['kernel_initializer'] = 'he_uniform'
+        builder.dense_defaults['kernel_initializer'] = 'he_uniform'
+        builder.set_default_l2(1e-5)
 
+        x = inputs = keras.layers.Input(image_size + (3,))
+        x, _, lr_multipliers = self._create_basenet(builder, x)
+        assert K.int_shape(x)[1] == 3
+        assert len(lr_multipliers) == 0
+        x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
+
+        return keras.models.Model(inputs=inputs, outputs=x)
+
+    @tk.log.trace()
     def create_network(self):
-        """ネットワークの作成"""
-        return model_net.create_network(self)
+        """モデルの作成。"""
+        import keras
+        import keras.backend as K
+        builder = tk.dl.Builder()
+        builder.conv_defaults['kernel_initializer'] = 'he_uniform'
+        builder.dense_defaults['kernel_initializer'] = 'he_uniform'
+        builder.set_default_l2(1e-5)
 
+        def _centerblock(builder, x, ref, map_size):
+            x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
+            x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
+            x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)
+            ref['out{}'.format(1)] = x
+            return x
+
+        def _upblock(builder, x, ref, map_size):
+            import keras
+            import keras.backend as K
+
+            in_map_size = K.int_shape(x)[1]
+            assert map_size % in_map_size == 0
+            up_size = map_size // in_map_size
+
+            x = keras.layers.Dropout(0.5)(x)
+            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
+                                 kernel_initializer='zeros',
+                                 use_bias=False, use_bn=False, use_act=False,
+                                 name='up{}_us'.format(map_size))(x)
+            t = ref['down{}'.format(map_size)]
+            t = builder.conv2d(256, (1, 1), use_act=False, name='up{}_lt'.format(map_size))(t)
+            x = keras.layers.Add(name='up{}_mix'.format(map_size))([x, t])
+            x = builder.bn(name='up{}_mix_bn'.format(map_size))(x)
+            x = builder.act(name='up{}_mix_act'.format(map_size))(x)
+            x = builder.conv2d(256, (3, 3), name='up{}_conv1'.format(map_size))(x)
+            x = builder.conv2d(256, (3, 3), name='up{}_conv2'.format(map_size))(x)
+
+            ref['out{}'.format(map_size)] = x
+            return x
+
+        # downsampling (ベースネットワーク)
+        x = inputs = keras.layers.Input(self.image_size + (3,))
+        x, ref, lr_multipliers = self._create_basenet(builder, x)
+        # 欲しいサイズがちゃんとあるかチェック
+        for map_size in self.map_sizes:
+            assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
+        # center
+        map_size = K.int_shape(x)[1]
+        x = _centerblock(builder, x, ref, map_size)
+        # upsampling
+        while True:
+            x = _upblock(builder, x, ref, map_size)
+            if self.map_sizes[0] <= map_size:
+                break
+            map_size *= 2
+        # prediction module
+        outputs = self._create_pm(builder, ref, lr_multipliers)
+
+        return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
+
+    @tk.log.trace()
+    def _create_basenet(self, builder, x):
+        """ベースネットワークの作成。"""
+        import keras
+        import keras.backend as K
+
+        def _freeze(model, freeze_end_layer):
+            import keras
+            for layer in model.layers:
+                if layer.name == freeze_end_layer:
+                    break
+                if not isinstance(layer, keras.layers.BatchNormalization):
+                    layer.trainable = False
+
+        def _downblock(builder, x):
+            import keras.backend as K
+
+            map_size = K.int_shape(x)[1] // 2
+
+            x = builder.conv2d(256, (2, 2), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
+            x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
+
+            assert K.int_shape(x)[1] == map_size
+            return x, map_size
+
+        ref_list = []
+
+        lr_multipliers = {}
+        if self.base_network == 'custom':
+            x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
+            x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
+            x = builder.conv2d(64, (3, 3), name='stage2_conv1')(x)
+            x = builder.conv2d(64, (3, 3), name='stage2_conv2')(x)
+            x = keras.layers.MaxPooling2D(name='stage2_ds')(x)
+            x = builder.conv2d(128, (3, 3), name='stage3_conv1')(x)
+            x = builder.conv2d(128, (3, 3), name='stage3_conv2')(x)
+            x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
+            x = builder.conv2d(256, (3, 3), name='stage4_conv1')(x)
+            x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
+            ref_list.append(x)
+        elif self.base_network == 'vgg16':
+            basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
+            _freeze(basenet, 'block5_conv1')
+            ref_list.append(basenet.get_layer(name='block4_pool').input)
+            ref_list.append(basenet.get_layer(name='block5_pool').input)
+        elif self.base_network == 'resnet50':
+            basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
+            _freeze(basenet, 'res4f_branch2a')
+            ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
+            ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
+            ref_list.append(basenet.get_layer(name='avg_pool').input)
+        elif self.base_network == 'xception':
+            basenet = keras.applications.Xception(include_top=False, input_tensor=x)
+            _freeze(basenet, 'block10_sepconv1_act')
+            ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
+            ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
+            ref_list.append(basenet.get_layer(name='block14_sepconv2_act').output)
+        else:
+            assert False
+
+        x = ref_list[-1]
+
+        if K.int_shape(x)[-1] > 256:
+            x = builder.conv2d(256, (1, 1), name='tail_sq')(x)
+        assert K.int_shape(x)[-1] == 256
+
+        # downsampling
+        while True:
+            x, map_size = _downblock(builder, x)
+            ref_list.append(x)
+            if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
+                break
+
+        ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}
+        return x, ref, lr_multipliers
+
+    @tk.log.trace()
+    def _create_pm(self, builder, ref, lr_multipliers):
+        """Prediction module."""
+        import keras
+
+        shared_layers = {
+            'conv0': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv0'),
+            'conv1': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv1'),
+            'conv2': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv2'),
+            'conv3': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv3'),
+            'conv4': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv4'),
+        }
+        for layer in shared_layers.values():
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, [1 / len(self.map_sizes)] * len(w)))  # 共有部分の学習率調整
+
+        confs, locs, ious = [], [], []
+        for map_size in self.map_sizes:
+            assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
+            x = ref['out{}'.format(map_size)]
+            x = shared_layers['conv0'](x)
+            sc = x
+            x = shared_layers['conv1'](x)
+            x = shared_layers['conv2'](x)
+            x = keras.layers.Add()([sc, x])
+            sc = x
+            x = shared_layers['conv3'](x)
+            x = shared_layers['conv4'](x)
+            x = keras.layers.Add()([sc, x])
+            x = builder.bn(name='pm{}_bn'.format(map_size))(x)
+            x = builder.act(name='pm{}_act'.format(map_size))(x)
+
+            for pat_ix in range(len(self.pb_size_patterns)):
+                prefix = 'pm{}-{}'.format(map_size, pat_ix)
+                conf, loc, iou = self._pm(builder, x, prefix)
+                confs.append(conf)
+                locs.append(loc)
+                ious.append(iou)
+
+        for pat_ix in range(len(self.pb_center_size_patterns)):
+            prefix = 'pm{}-{}'.format(1, pat_ix)
+            conf, loc, iou = self._pm(builder, ref['out{}'.format(1)], prefix)
+            confs.append(conf)
+            locs.append(loc)
+            ious.append(iou)
+
+        confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
+        locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
+        ious = keras.layers.Concatenate(axis=-2, name='output_ious')(ious)
+
+        # いったんくっつける (損失関数の中で分割して使う)
+        outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
+
+        return outputs
+
+    def _pm(self, builder, x, prefix):
+        import keras
+        # conf/loc/iou
+        conf = builder.conv2d(self.nb_classes, (1, 1),
+                              kernel_initializer='zeros',
+                              bias_initializer=tk.dl.od_bias_initializer(self.nb_classes),
+                              bias_regularizer=None,
+                              activation='softmax',
+                              use_bn=False,
+                              name=prefix + '_conf')(x)
+        loc = builder.conv2d(4, (1, 1),
+                             kernel_initializer='zeros',
+                             use_bn=False,
+                             use_act=False,
+                             name=prefix + '_loc')(x)
+        iou = builder.conv2d(1, (1, 1),
+                             kernel_initializer='zeros',
+                             activation='sigmoid',
+                             use_bn=False,
+                             name=prefix + '_iou')(x)
+        # reshape
+        conf = keras.layers.Reshape((-1, self.nb_classes), name=prefix + '_reshape_conf')(conf)
+        loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
+        iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
+        return conf, loc, iou
+
+    @tk.log.trace()
     def create_predict_network(self, model):
         """予測用ネットワークの作成"""
-        return model_net.create_predict_network(self, model)
+        import keras
+        import keras.backend as K
+
+        try:
+            confs = model.get_layer(name='output_confs').output
+            locs = model.get_layer(name='output_locs').output
+            ious = model.get_layer(name='output_ious').output
+        except ValueError:
+            output = model.outputs[0]  # マルチGPU対策。。
+            confs = keras.layers.Lambda(lambda c: c[:, :, :-5], K.int_shape(output)[1:-1] + (self.nb_classes,))(output)
+            locs = keras.layers.Lambda(lambda c: c[:, :, -5:-1], K.int_shape(output)[1:-1] + (4,))(output)
+            ious = keras.layers.Lambda(lambda c: c[:, :, -1:], K.int_shape(output)[1:-1] + (1,))(output)
+
+        def _class(confs):
+            return K.argmax(confs[:, :, 1:], axis=-1) + 1
+
+        def _conf(x):
+            confs = K.max(x[0][:, :, 1:], axis=-1)
+            ious = x[1][:, :, 0]
+            return K.sqrt(confs * ious) * np.expand_dims(self.pb_mask, axis=0)
+
+        def _locs(locs):
+            return self.decode_locs(locs, K)
+
+        objclasses = keras.layers.Lambda(_class, K.int_shape(confs)[1:-1])(confs)
+        objconfs = keras.layers.Lambda(_conf, K.int_shape(confs)[1:-1])([confs, ious])
+        locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
+
+        return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])
+
+    def create_generator(self, encode_truth=True):
+        """ImageDataGeneratorを作って返す。"""
+        gen = tk.image.ImageDataGenerator()
+        gen.add(tk.image.CustomAugmentation(self._transform, probability=1))
+        gen.add(tk.image.Resize(self.image_size))
+        gen.add(tk.image.RandomAugmentors([
+            tk.image.RandomBlur(probability=0.5),
+            tk.image.RandomUnsharpMask(probability=0.5),
+            tk.image.GaussianNoise(probability=0.5),
+            tk.image.RandomSaturation(probability=0.5),
+            tk.image.RandomBrightness(probability=0.5),
+            tk.image.RandomContrast(probability=0.5),
+            tk.image.RandomHue(probability=0.5),
+        ]))
+        gen.add(tk.image.RandomErasing(probability=0.5))
+        gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
+        if encode_truth:
+            gen.add(tk.image.ProcessOutput(self._process_output))
+        return gen
+
+    def _transform(self, rgb: np.ndarray, y: tk.ml.ObjectsAnnotation, w, rand: np.random.RandomState, ctx: tk.generator.GeneratorContext):
+        """変形を伴うAugmentation。"""
+        assert ctx is not None
+
+        # 左右反転
+        if rand.rand() <= 0.5:
+            rgb = tk.ndimage.flip_lr(rgb)
+            if y is not None:
+                y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
+
+        aspect_rations = (3 / 4, 4 / 3)
+        aspect_prob = 0.5
+        ar = np.sqrt(rand.choice(aspect_rations)) if rand.rand() <= aspect_prob else 1
+        # padding or crop
+        if rand.rand() <= 0.5:
+            # padding (zoom out)
+            rgb = self._padding(rgb, ar, rand, y)
+        else:
+            # crop (zoom in)
+            # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
+            rgb = self._crop(y, rgb, rand, ar)
+        return rgb, y, w
+
+    def _padding(self, rgb, ar, rand, y):
+        old_w, old_h = rgb.shape[1], rgb.shape[0]
+        for _ in range(30):
+            pr = np.random.uniform(1.5, 4)  # SSDは16倍とか言っているが、やり過ぎな気がするので適当
+            pw = max(old_w, int(round(old_w * pr * ar)))
+            ph = max(old_h, int(round(old_h * pr / ar)))
+            px = rand.randint(0, pw - old_w + 1)
+            py = rand.randint(0, ph - old_h + 1)
+            if y is not None:
+                bboxes = np.copy(y.bboxes)
+                bboxes[:, (0, 2)] = px + bboxes[:, (0, 2)] * old_w
+                bboxes[:, (1, 3)] = py + bboxes[:, (1, 3)] * old_h
+                sb = np.round(bboxes * np.tile([self.image_size[1] / pw, self.image_size[0] / ph], 2))
+                if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
+                    continue
+                y.bboxes = bboxes / np.tile([pw, ph], 2)
+            # 先に縮小
+            rw = self.image_size[1] / pw
+            rh = self.image_size[0] / ph
+            new_w = int(round(old_w * rw))
+            new_h = int(round(old_h * rh))
+            rgb = tk.ndimage.resize(rgb, new_w, new_h, padding=None)
+            # パディング
+            px = int(round(px * rw))
+            py = int(round(py * rh))
+            padding = rand.choice(('edge', 'zero', 'one', 'rand'))
+            rgb = tk.ndimage.pad_ltrb(rgb, px, py, self.image_size[1] - new_w - px, self.image_size[0] - new_h - py, padding, rand)
+            assert rgb.shape[1] == self.image_size[1]
+            assert rgb.shape[0] == self.image_size[0]
+            break
+        return rgb
+
+    def _crop(self, y, rgb, rand, ar):
+        # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
+        bb_center = (y.bboxes[:, 2:] - y.bboxes[:, :2]) / 2  # y.bboxesの中央の座標
+        bb_center *= [rgb.shape[1], rgb.shape[0]]
+        for _ in range(30):
+            crop_rate = 0.15625
+            cr = rand.uniform(1 - crop_rate, 1)  # 元のサイズに対する割合
+            cw = min(rgb.shape[1], int(np.floor(rgb.shape[1] * cr * ar)))
+            ch = min(rgb.shape[0], int(np.floor(rgb.shape[0] * cr / ar)))
+            cx = rand.randint(0, rgb.shape[1] - cw + 1)
+            cy = rand.randint(0, rgb.shape[0] - ch + 1)
+            # 全bboxの中央の座標を含む場合のみOKとする
+            if np.logical_or(bb_center < [cx, cy], [cx + cw, cy + ch] < bb_center).any():
+                continue
+            if y is not None:
+                bboxes = np.copy(y.bboxes)
+                bboxes[:, (0, 2)] = np.round(bboxes[:, (0, 2)] * rgb.shape[1] - cx)
+                bboxes[:, (1, 3)] = np.round(bboxes[:, (1, 3)] * rgb.shape[0] - cy)
+                bboxes = np.clip(bboxes, 0, 1)
+                sb = np.round(bboxes * np.tile([self.image_size[1] / cw, self.image_size[0] / ch], 2))
+                if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
+                    continue
+                y.bboxes = bboxes / np.tile([cw, ch], 2)
+            # 切り抜き
+            rgb = tk.ndimage.crop(rgb, cx, cy, cw, ch)
+            assert rgb.shape[1] == cw
+            assert rgb.shape[0] == ch
+            break
+        return rgb
+
+    def _process_output(self, y):
+        if y is not None:
+            y = self.encode_truth([y])[0]
+        return y
+
+    def save(self, path: pathlib.Path):
+        """保存。"""
+        joblib.dump(self, path)
+
+    @staticmethod
+    def load(path: pathlib.Path):
+        """読み込み。"""
+        od = joblib.load(path)  # type: ObjectDetector
+        return od

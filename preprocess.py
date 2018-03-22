@@ -4,11 +4,10 @@ import argparse
 import pathlib
 
 import numpy as np
-import sklearn.externals.joblib
+import sklearn.externals.joblib as joblib
 
 import config
 import data
-import evaluation
 import models
 import pytoolkit as tk
 
@@ -37,15 +36,15 @@ def _run(logger, args):
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
     logger.info('データの読み込み: data-dir=%s data-type=%s', args.data_dir, args.data_type)
     (_, y_train), (X_test, y_test), class_names = data.load_data(args.data_dir, args.data_type)
-    sklearn.externals.joblib.dump(y_train, config.DATA_DIR / 'y_train.pkl')
-    sklearn.externals.joblib.dump(y_test, config.DATA_DIR / 'y_test.pkl')
-    sklearn.externals.joblib.dump(class_names, config.DATA_DIR / 'class_names.pkl')
+    joblib.dump(y_train, config.DATA_DIR / 'y_train.pkl')
+    joblib.dump(y_test, config.DATA_DIR / 'y_test.pkl')
+    joblib.dump(class_names, config.DATA_DIR / 'class_names.pkl')
 
     # 訓練データからパラメータを適当に決める
     logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
                 args.base_network, args.input_size, args.map_sizes, len(class_names))
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
-    sklearn.externals.joblib.dump(od, str(config.RESULT_DIR / 'model.pkl'))
+    joblib.dump(od, str(config.RESULT_DIR / 'model.pkl'))
 
     # prior boxのカバー度合いのチェック
     logger.info('mean objects / image = %f', od.mean_objets)
@@ -57,8 +56,10 @@ def _run(logger, args):
 
     # ついでに、試しに回答を出力してみる
     check_true_size = 32
-    evaluation.plot_truth(X_test[:check_true_size], y_test[:check_true_size],
-                          class_names, config.RESULT_DIR / '___ground_truth')
+    for X, y in zip(X_test[:check_true_size], y_test[:check_true_size]):
+        tk.ml.plot_objects(
+            X, config.RESULT_DIR / '___ground_truth' / (pathlib.Path(X).name + '.png'),
+            y.classes, None, y.bboxes, class_names)
 
     # customの場合、事前学習用データを作成
     if args.base_network == 'custom':
@@ -79,7 +80,9 @@ def _make_teacher_data():
 
     teacher_model = keras.applications.Xception(include_top=False, input_shape=(71, 71, 3))
     teacher_model, batch_size = tk.dl.create_data_parallel_model(teacher_model, batch_size)
-    gen = tk.image.ImageDataGenerator((71, 71), preprocess_input=keras.applications.xception.preprocess_input)
+    gen = tk.image.ImageDataGenerator()
+    gen.add(tk.image.Resize((71, 71)))
+    gen.add(tk.image.ProcessInput(keras.applications.xception.preprocess_input, batch_axis=True))
     steps = gen.steps_per_epoch(len(X), batch_size)
 
     pred_list = []
@@ -91,7 +94,7 @@ def _make_teacher_data():
                 break
 
     pred_list = np.concatenate(pred_list)
-    sklearn.externals.joblib.dump(pred_list, data_path)
+    joblib.dump(pred_list, data_path)
 
 
 if __name__ == '__main__':

@@ -5,9 +5,10 @@ import pathlib
 
 import horovod.keras as hvd
 import numpy as np
-import sklearn.externals.joblib
+import sklearn.externals.joblib as joblib
 
 import config
+import models
 import pytoolkit as tk
 
 
@@ -30,7 +31,7 @@ def _main():
 @tk.log.trace()
 def _run(logger, args):
     # モデルの読み込み
-    od = sklearn.externals.joblib.load(str(config.RESULT_DIR / 'model.pkl'))  # type: models.ObjectDetector
+    od = models.ObjectDetector.load(config.RESULT_DIR / 'model.pkl')
     logger.info('mean objects / image = %f', od.mean_objets)
     logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
@@ -41,7 +42,7 @@ def _run(logger, args):
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         # データの読み込み
         (X_train, _), (X_test, _) = keras.datasets.cifar100.load_data()
-        y = sklearn.externals.joblib.load(config.DATA_DIR / 'cifar100_teacher_pred.pkl')
+        y = joblib.load(config.DATA_DIR / 'cifar100_teacher_pred.pkl')
         y_train, y_test = y[:50000, ...], y[50000:, ...]
         logger.info('train, test = %d, %d', len(X_train), len(X_test))
 

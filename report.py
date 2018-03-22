@@ -4,9 +4,9 @@ import argparse
 import pathlib
 
 import pandas as pd
-import sklearn.externals.joblib
 
 import config
+import models
 import pytoolkit as tk
 
 
@@ -33,7 +33,7 @@ def _main():
 
 
 def _report_net():
-    od = sklearn.externals.joblib.load(str(config.RESULT_DIR / 'model.pkl'))  # type: models.ObjectDetector
+    od = models.ObjectDetector.load(config.RESULT_DIR / 'model.pkl')
 
     import keras
     with tk.dl.session():

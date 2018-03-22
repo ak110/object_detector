@@ -5,11 +5,10 @@ import pathlib
 
 import horovod.keras as hvd
 import numpy as np
-import sklearn.externals.joblib
 
 import config
 import data
-import generator
+import models
 import pytoolkit as tk
 
 
@@ -37,7 +36,7 @@ def _run(logger, args):
     logger.info('train, test = %d, %d', len(X_train), len(X_test))
 
     # モデルの読み込み
-    od = sklearn.externals.joblib.load(str(config.RESULT_DIR / 'model.pkl'))  # type: models.ObjectDetector
+    od = models.ObjectDetector.load(config.RESULT_DIR / 'model.pkl')
     logger.info('mean objects / image = %f', od.mean_objets)
     logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
@@ -70,7 +69,7 @@ def _run(logger, args):
             opt = hvd.DistributedOptimizer(opt, device_dense='/cpu:0')
             model.compile(opt, od.loss, od.metrics)
 
-        gen = generator.create_generator(od.image_size, od.get_preprocess_input(), od)
+        gen = od.create_generator()
 
         callbacks = []
         if args.no_lr_decay:

@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import PIL.Image
-import sklearn.externals.joblib
+import sklearn.externals.joblib as joblib
 from tqdm import tqdm
 
 import pytoolkit as tk
@@ -87,7 +87,7 @@ def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
 
 def load_data_pkl(data_dir: pathlib.Path):
     """データの読み込み"""
-    y_train = sklearn.externals.joblib.load(data_dir / 'y_train.pkl')
-    y_test = sklearn.externals.joblib.load(data_dir / 'y_test.pkl')
-    class_names = sklearn.externals.joblib.load(data_dir / 'class_names.pkl')
+    y_train = joblib.load(data_dir / 'y_train.pkl')
+    y_test = joblib.load(data_dir / 'y_test.pkl')
+    class_names = joblib.load(data_dir / 'class_names.pkl')
     return y_train, y_test, class_names
