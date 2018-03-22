@@ -3,16 +3,22 @@
 import argparse
 import pathlib
 
+import better_exceptions
 import horovod.keras as hvd
 import numpy as np
 import sklearn.externals.joblib as joblib
 
-import config
 import models
 import pytoolkit as tk
 
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / 'data'
+RESULT_DIR = BASE_DIR / 'results'
+RESULT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _main():
+    better_exceptions.MAX_LENGTH = 100
     hvd.init()
 
     parser = argparse.ArgumentParser()
@@ -23,7 +29,7 @@ def _main():
     logger = tk.log.get()
     if hvd.rank() == 0:
         logger.addHandler(tk.log.stream_handler())
-        logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
+        logger.addHandler(tk.log.file_handler(RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
 
     _run(logger, args)
 
@@ -31,7 +37,7 @@ def _main():
 @tk.log.trace()
 def _run(logger, args):
     # モデルの読み込み
-    od = models.ObjectDetector.load(config.RESULT_DIR / 'model.pkl')
+    od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
     logger.info('mean objects / image = %f', od.mean_objets)
     logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
     logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
@@ -42,7 +48,7 @@ def _run(logger, args):
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
         # データの読み込み
         (X_train, _), (X_test, _) = keras.datasets.cifar100.load_data()
-        y = joblib.load(config.DATA_DIR / 'cifar100_teacher_pred.pkl')
+        y = joblib.load(DATA_DIR / 'cifar100_teacher_pred.pkl')
         y_train, y_test = y[:50000, ...], y[50000:, ...]
         logger.info('train, test = %d, %d', len(X_train), len(X_test))
 
@@ -85,7 +91,7 @@ def _run(logger, args):
         callbacks.append(hvd.callbacks.MetricAverageCallback())
         callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
         if hvd.rank() == 0:
-            callbacks.append(tk.dl.tsv_log_callback(config.RESULT_DIR / 'pretrain.history.tsv'))
+            callbacks.append(tk.dl.tsv_log_callback(RESULT_DIR / 'pretrain.history.tsv'))
             callbacks.append(tk.dl.logger_callback())
         callbacks.append(tk.dl.freeze_bn_callback(0.95))
 
@@ -99,7 +105,7 @@ def _run(logger, args):
             callbacks=callbacks)
 
         if hvd.rank() == 0:
-            model.save(str(config.RESULT_DIR / 'pretrain.model.h5'))
+            model.save(str(RESULT_DIR / 'pretrain.model.h5'))
 
 
 if __name__ == '__main__':

@@ -3,21 +3,27 @@
 import argparse
 import pathlib
 
+import better_exceptions
 import numpy as np
 import sklearn.externals.joblib as joblib
+from tqdm import tqdm
 
-import config
 import data
 import models
 import pytoolkit as tk
 
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / 'data'
+RESULT_DIR = BASE_DIR / 'results'
+RESULT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _main():
+    better_exceptions.MAX_LENGTH = 100
     import matplotlib as mpl
     mpl.use('Agg')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data-dir', help='データディレクトリ。', default=str(config.DATA_DIR))  # sambaの問題のためのwork around...
     parser.add_argument('--data-type', help='データの種類。', default='voc', choices=['voc', 'csv'])
     parser.add_argument('--base-network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320、512など。', default=320, type=int)
@@ -26,7 +32,7 @@ def _main():
 
     logger = tk.log.get()
     logger.addHandler(tk.log.stream_handler())
-    logger.addHandler(tk.log.file_handler(config.RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
+    logger.addHandler(tk.log.file_handler(RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
 
     _run(logger, args)
 
@@ -34,17 +40,17 @@ def _main():
 @tk.log.trace()
 def _run(logger, args):
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
-    logger.info('データの読み込み: data-dir=%s data-type=%s', args.data_dir, args.data_type)
-    (_, y_train), (X_test, y_test), class_names = data.load_data(args.data_dir, args.data_type)
-    joblib.dump(y_train, config.DATA_DIR / 'y_train.pkl')
-    joblib.dump(y_test, config.DATA_DIR / 'y_test.pkl')
-    joblib.dump(class_names, config.DATA_DIR / 'class_names.pkl')
+    logger.info('データの読み込み: data-dir=%s data-type=%s', DATA_DIR, args.data_type)
+    (_, y_train), (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
+    joblib.dump(y_train, DATA_DIR / 'y_train.pkl')
+    joblib.dump(y_test, DATA_DIR / 'y_test.pkl')
+    joblib.dump(class_names, DATA_DIR / 'class_names.pkl')
 
     # 訓練データからパラメータを適当に決める
     logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
                 args.base_network, args.input_size, args.map_sizes, len(class_names))
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
-    joblib.dump(od, str(config.RESULT_DIR / 'model.pkl'))
+    joblib.dump(od, str(RESULT_DIR / 'model.pkl'))
 
     # prior boxのカバー度合いのチェック
     logger.info('mean objects / image = %f', od.mean_objets)
@@ -52,13 +58,13 @@ def _run(logger, args):
     logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
     logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
     logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
-    od.check_prior_boxes(logger, config.RESULT_DIR, y_test, class_names)
+    od.check_prior_boxes(logger, RESULT_DIR, y_test, class_names)
 
     # ついでに、試しに回答を出力してみる
     check_true_size = 32
     for X, y in zip(X_test[:check_true_size], y_test[:check_true_size]):
         tk.ml.plot_objects(
-            X, config.RESULT_DIR / '___ground_truth' / (pathlib.Path(X).name + '.png'),
+            X, RESULT_DIR / '___ground_truth' / (pathlib.Path(X).name + '.png'),
             y.classes, None, y.bboxes, class_names)
 
     # customの場合、事前学習用データを作成
@@ -70,9 +76,8 @@ def _run(logger, args):
 def _make_teacher_data():
     """事前学習用データの作成。"""
     import keras
-    from tqdm import tqdm
     batch_size = 500
-    data_path = config.DATA_DIR / 'cifar100_teacher_pred.pkl'
+    data_path = DATA_DIR / 'cifar100_teacher_pred.pkl'
     if data_path.is_file():
         return
     (X_train, _), (X_test, _) = keras.datasets.cifar100.load_data()
