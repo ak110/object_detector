@@ -27,9 +27,11 @@ class ObjectDetector(object):
         gridに配置したときのIOUを直接最適化するのは難しそうなので、
         とりあえず大雑把にKMeansでクラスタ化したりなど。
         """
-        map_sizes = np.array(sorted(map_sizes)[::-1])
+        logger = tk.log.get(__name__)
+        logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
+                    base_network, input_size, map_sizes, nb_classes)
 
-        # 平均オブジェクト数
+        map_sizes = np.array(sorted(map_sizes)[::-1])
         mean_objets = np.mean([len(y.bboxes) for y in y_train])
 
         # bboxのサイズ
@@ -153,6 +155,15 @@ class ObjectDetector(object):
                     'count': len(prior_boxes),
                 })
 
+    def summary(self, logger=None):
+        """サマリ表示。"""
+        logger = logger or tk.log.get(__name__)
+        logger.info('mean objects / image = %f', self.mean_objets)
+        logger.info('prior box size ratios = %s', str(self.pb_size_ratios))
+        logger.info('prior box aspect ratios = %s', str(self.pb_aspect_ratios))
+        logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in self.pb_info])))
+        logger.info('prior box count = %d (valid=%d)', len(self.pb_mask), np.count_nonzero(self.pb_mask))
+
     def encode_locs(self, bboxes, bb_ix, pb_ix):
         """座標を学習用に変換。"""
         if True:
@@ -183,7 +194,7 @@ class ObjectDetector(object):
             ], axis=-1)
             return xp.clip(decoded, 0, 1)
 
-    def check_prior_boxes(self, logger, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
+    def check_prior_boxes(self, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対してprior boxがどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
@@ -241,6 +252,7 @@ class ObjectDetector(object):
         cr = sklearn.metrics.classification_report(y_true, y_pred, target_names=class_names)
 
         # ログ出力
+        logger = tk.log.get(__name__)
         logger.info(cr)
         logger.info('assigned counts:')
         for i, c in enumerate(assigned_counts):
@@ -552,7 +564,13 @@ class ObjectDetector(object):
         assert len(lr_multipliers) == 0
         x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
 
-        return keras.models.Model(inputs=inputs, outputs=x)
+        model = keras.models.Model(inputs=inputs, outputs=x)
+
+        logger = tk.log.get(__name__)
+        logger.info('network depth: %d', tk.dl.count_network_depth(model))
+        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
+
+        return model
 
     @tk.log.trace()
     def create_network(self):
@@ -613,7 +631,13 @@ class ObjectDetector(object):
         # prediction module
         outputs = self._create_pm(builder, ref, lr_multipliers)
 
-        return keras.models.Model(inputs=inputs, outputs=outputs), lr_multipliers
+        model = keras.models.Model(inputs=inputs, outputs=outputs)
+
+        logger = tk.log.get(__name__)
+        logger.info('network depth: %d', tk.dl.count_network_depth(model))
+        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
+
+        return model, lr_multipliers
 
     @tk.log.trace()
     def _create_basenet(self, builder, x):
@@ -923,4 +947,5 @@ class ObjectDetector(object):
     def load(path: pathlib.Path):
         """読み込み。"""
         od = joblib.load(path)  # type: ObjectDetector
+        od.summary()
         return od

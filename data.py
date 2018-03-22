@@ -16,14 +16,20 @@ def load_data(data_dir, data_type: str):
     """データの読み込み"""
     assert data_type in ('voc', 'csv', 'pkl')
     data_dir = pathlib.Path(data_dir)
+
     if data_type == 'voc':
         y_train, y_test, class_names = load_data_voc(data_dir)
     elif data_type == 'csv':
         y_train, y_test, class_names = load_data_csv(data_dir)
     else:
         y_train, y_test, class_names = load_data_pkl(data_dir)
+
     X_train = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_train)
     X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
+
+    logger = tk.log.get(__name__)
+    logger.info('train, test = %d, %d', len(X_train), len(X_test))
+
     return (X_train, y_train), (X_test, y_test), class_names
 
 

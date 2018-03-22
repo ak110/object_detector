@@ -27,17 +27,16 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
 
-    logger = tk.log.get()
-    logger.addHandler(tk.log.stream_handler())
-    logger.addHandler(tk.log.file_handler(RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
-    _run(logger, args)
+    tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
+    _run(args)
 
 
 @tk.log.trace()
-def _run(logger, args):
+def _run(args):
+    logger = tk.log.get(__name__)
+
     # データの読み込み
-    (X_train, _), (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
-    logger.info('train, test = %d, %d', len(X_train), len(X_test))
+    _, (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
 
     with tk.dl.session():
         # モデルの読み込み

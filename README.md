@@ -27,12 +27,12 @@ mAP=0.7872 mAP(VOC2007)=0.7630
 
 ## データの配置方法メモ
 
-[DATA.md](./DATA.md)
+[DATA.md](./docs/DATA.md)
 
 ## 使い方メモ
 
-[USAGE.md](./USAGE.md)
+[USAGE.md](./docs/USAGE.md)
 
 ## モデルの詳細メモ
 
-[MODEL.md](./MODEL.md)
+[MODEL.md](./docs/MODEL.md)

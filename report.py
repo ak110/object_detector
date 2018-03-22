@@ -8,7 +8,6 @@ import pandas as pd
 import models
 import pytoolkit as tk
 
-
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / 'data'
 
@@ -22,8 +21,7 @@ def _main():
     parser.add_argument('--result-dir', help='resultsディレクトリのパス。', type=pathlib.Path, default=BASE_DIR / 'results')
     args = parser.parse_args()
 
-    logger = tk.log.get()
-    logger.addHandler(tk.log.stream_handler(level='DEBUG'))
+    tk.log.init(None, stream_level='DEBUG')
 
     if args.mode == 'net':
         _report_net(args)
@@ -49,7 +47,10 @@ def _report_net(args):
             tk.dl.plot_model_params(model, args.result_dir / 'model.params.png')
 
         with tk.log.trace_scope('model.png'):
-            keras.utils.plot_model(model, str(args.result_dir / 'model.png'), show_shapes=False)
+            try:
+                keras.utils.plot_model(model, str(args.result_dir / 'model.png'), show_shapes=False)
+            except BaseException:
+                tk.log.get(__name__).warning('keras.utils.plot_model失敗', exc_info=True)
 
 
 def _report_history(args):

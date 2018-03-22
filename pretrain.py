@@ -26,23 +26,16 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=128, type=int)
     args = parser.parse_args()
 
-    logger = tk.log.get()
-    if hvd.rank() == 0:
-        logger.addHandler(tk.log.stream_handler())
-        logger.addHandler(tk.log.file_handler(RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
-
-    _run(logger, args)
+    tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if hvd.rank() == 0 else None)
+    _run(args)
 
 
 @tk.log.trace()
-def _run(logger, args):
+def _run(args):
+    logger = tk.log.get(__name__)
+
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    logger.info('mean objects / image = %f', od.mean_objets)
-    logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
-    logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
-    logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
 
     import keras
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):
@@ -54,8 +47,6 @@ def _run(logger, args):
 
         image_size = (96, 96)
         model = od.create_pretrain_network(image_size)
-        logger.info('network depth: %d', tk.dl.count_network_depth(model))
-        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
 
         # 学習率：
         # ・CIFARなどの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。

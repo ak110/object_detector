@@ -30,15 +30,13 @@ def _main():
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
     args = parser.parse_args()
 
-    logger = tk.log.get()
-    logger.addHandler(tk.log.stream_handler())
-    logger.addHandler(tk.log.file_handler(RESULT_DIR / (pathlib.Path(__file__).stem + '.log')))
-
-    _run(logger, args)
+    tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
+    _run(args)
 
 
 @tk.log.trace()
-def _run(logger, args):
+def _run(args):
+    logger = tk.log.get(__name__)
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
     logger.info('データの読み込み: data-dir=%s data-type=%s', DATA_DIR, args.data_type)
     (_, y_train), (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
@@ -47,18 +45,11 @@ def _run(logger, args):
     joblib.dump(class_names, DATA_DIR / 'class_names.pkl')
 
     # 訓練データからパラメータを適当に決める
-    logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
-                args.base_network, args.input_size, args.map_sizes, len(class_names))
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
-    joblib.dump(od, str(RESULT_DIR / 'model.pkl'))
-
+    od.save(RESULT_DIR / 'model.pkl')
+    od.summary()
     # prior boxのカバー度合いのチェック
-    logger.info('mean objects / image = %f', od.mean_objets)
-    logger.info('prior box size ratios = %s', str(od.pb_size_ratios))
-    logger.info('prior box aspect ratios = %s', str(od.pb_aspect_ratios))
-    logger.info('prior box sizes = %s', str(np.unique([c['size'] for c in od.pb_info])))
-    logger.info('prior box count = %d (valid=%d)', len(od.pb_mask), np.count_nonzero(od.pb_mask))
-    od.check_prior_boxes(logger, RESULT_DIR, y_test, class_names)
+    od.check_prior_boxes(RESULT_DIR, y_test, class_names)
 
     # ついでに、試しに回答を出力してみる
     check_true_size = 32
