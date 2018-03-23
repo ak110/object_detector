@@ -34,7 +34,6 @@ def _main():
 @tk.log.trace()
 def _run(args):
     logger = tk.log.get(__name__)
-
     # データの読み込み
     _, (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
 
@@ -46,13 +45,13 @@ def _run(args):
         # マルチGPU対応
         logger.info('gpu count = %d', tk.get_gpu_count())
         model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
-
         # 評価
-        _evaluate(logger, od, model, X_test, y_test, batch_size, -1, class_names, RESULT_DIR)
+        _evaluate(od, model, X_test, y_test, batch_size, -1, class_names, RESULT_DIR)
 
 
-def _evaluate(logger, od, model, X_test, y_test, batch_size, epoch, class_names, result_dir):
+def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_dir):
     """`mAP`を算出してprintする。"""
+    logger = tk.log.get(__name__)
     predict_model = od.create_predict_network(model)
     gen = od.create_generator()
 
