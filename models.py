@@ -447,35 +447,51 @@ class ObjectDetector(object):
     @property
     def metrics(self):
         """各種metricをまとめて返す。"""
-        return [self.loss_conf, self.loss_loc, self.loss_iou, self.acc_bg, self.acc_obj]
-
-    def loss_conf(self, y_true, y_pred):
-        """クラス分類の損失項。(metrics用)"""
         import keras.backend as K
-        gt_confs = y_true[:, :, :-5]
-        pred_confs = y_pred[:, :, :-5]
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-        return self._loss_conf(gt_confs, pred_confs, obj_count)
 
-    @staticmethod
-    def loss_loc(y_true, y_pred):
-        """位置の損失項。(metrics用)"""
-        import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
-        pred_locs = y_pred[:, :, -5:-1]
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-        return ObjectDetector._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
+        def loss_conf(y_true, y_pred):
+            """クラス分類の損失項。(metrics用)"""
+            gt_confs = y_true[:, :, :-5]
+            pred_confs = y_pred[:, :, :-5]
+            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+            obj_count = K.sum(obj_mask, axis=-1)
+            return self._loss_conf(gt_confs, pred_confs, obj_count)
 
-    def loss_iou(self, y_true, y_pred):
-        """IOUの損失項。(metrics用)"""
-        import keras.backend as K
-        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
-        pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-        return self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
+        def loss_loc(y_true, y_pred):
+            """位置の損失項。(metrics用)"""
+            gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
+            pred_locs = y_pred[:, :, -5:-1]
+            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+            obj_count = K.sum(obj_mask, axis=-1)
+            return self._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
+
+        def loss_iou(self, y_true, y_pred):
+            """IOUの損失項。(metrics用)"""
+            gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
+            pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
+            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+            obj_count = K.sum(obj_mask, axis=-1)
+            return self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
+
+        def acc_bg(y_true, y_pred):
+            """背景の再現率。"""
+            gt_confs = y_true[:, :, :-5]
+            pred_confs = y_pred[:, :, :-5]
+            bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
+            bg_count = K.sum(bg_mask, axis=-1)
+            acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
+            return K.sum(acc * bg_mask, axis=-1) / bg_count
+
+        def acc_obj(y_true, y_pred):
+            """物体の再現率。"""
+            gt_confs = y_true[:, :, :-5]
+            pred_confs = y_pred[:, :, :-5]
+            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
+            obj_count = K.sum(obj_mask, axis=-1)
+            acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
+            return K.sum(acc * obj_mask, axis=-1) / obj_count
+
+        return [loss_conf, loss_loc, loss_iou, acc_bg, acc_obj]
 
     def _loss_conf(self, gt_confs, pred_confs, obj_count):
         """分類のloss。"""
@@ -518,28 +534,6 @@ class ObjectDetector(object):
         loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
         return loss
 
-    @staticmethod
-    def acc_bg(y_true, y_pred):
-        """背景の再現率。"""
-        import keras.backend as K
-        gt_confs = y_true[:, :, :-5]
-        pred_confs = y_pred[:, :, :-5]
-        bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
-        bg_count = K.sum(bg_mask, axis=-1)
-        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-        return K.sum(acc * bg_mask, axis=-1) / bg_count
-
-    @staticmethod
-    def acc_obj(y_true, y_pred):
-        """物体の再現率。"""
-        import keras.backend as K
-        gt_confs = y_true[:, :, :-5]
-        pred_confs = y_pred[:, :, :-5]
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)
-        acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-        return K.sum(acc * obj_mask, axis=-1) / obj_count
-
     def get_preprocess_input(self):
         """`preprocess_input`を返す。"""
         if self.base_network in ('vgg16', 'resnet50'):
@@ -552,15 +546,11 @@ class ObjectDetector(object):
     def create_pretrain_network(self, image_size):
         """事前学習用モデルの作成。"""
         import keras
-        import keras.backend as K
         builder = tk.dl.Builder()
-        builder.conv_defaults['kernel_initializer'] = 'he_uniform'
-        builder.dense_defaults['kernel_initializer'] = 'he_uniform'
-        builder.set_default_l2(1e-5)
 
         x = inputs = keras.layers.Input(image_size + (3,))
-        x, _, lr_multipliers = self._create_basenet(builder, x)
-        assert K.int_shape(x)[1] == 3
+        x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
+        assert builder.shape(x)[1] == 3
         assert len(lr_multipliers) == 0
         x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
 
@@ -573,27 +563,13 @@ class ObjectDetector(object):
         return model
 
     @tk.log.trace()
-    def create_network(self):
+    def create_network(self, load_weights=True, for_predict=False):
         """モデルの作成。"""
         import keras
-        import keras.backend as K
         builder = tk.dl.Builder()
-        builder.conv_defaults['kernel_initializer'] = 'he_uniform'
-        builder.dense_defaults['kernel_initializer'] = 'he_uniform'
-        builder.set_default_l2(1e-5)
-
-        def _centerblock(builder, x, ref, map_size):
-            x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
-            x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)
-            ref['out{}'.format(1)] = x
-            return x
 
         def _upblock(builder, x, ref, map_size):
-            import keras
-            import keras.backend as K
-
-            in_map_size = K.int_shape(x)[1]
+            in_map_size = builder.shape(x)[1]
             assert map_size % in_map_size == 0
             up_size = map_size // in_map_size
 
@@ -604,7 +580,7 @@ class ObjectDetector(object):
                                  name='up{}_us'.format(map_size))(x)
             t = ref['down{}'.format(map_size)]
             t = builder.conv2d(256, (1, 1), use_act=False, name='up{}_lt'.format(map_size))(t)
-            x = keras.layers.Add(name='up{}_mix'.format(map_size))([x, t])
+            x = keras.layers.add([x, t], name='up{}_mix'.format(map_size))
             x = builder.bn(name='up{}_mix_bn'.format(map_size))(x)
             x = builder.act(name='up{}_mix_act'.format(map_size))(x)
             x = builder.conv2d(256, (3, 3), name='up{}_conv1'.format(map_size))(x)
@@ -615,13 +591,16 @@ class ObjectDetector(object):
 
         # downsampling (ベースネットワーク)
         x = inputs = keras.layers.Input(self.image_size + (3,))
-        x, ref, lr_multipliers = self._create_basenet(builder, x)
+        x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
         # 欲しいサイズがちゃんとあるかチェック
         for map_size in self.map_sizes:
             assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
         # center
-        map_size = K.int_shape(x)[1]
-        x = _centerblock(builder, x, ref, map_size)
+        map_size = builder.shape(x)[1]
+        x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
+        x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
+        x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)
+        ref['out{}'.format(1)] = x
         # upsampling
         while True:
             x = _upblock(builder, x, ref, map_size)
@@ -629,9 +608,14 @@ class ObjectDetector(object):
                 break
             map_size *= 2
         # prediction module
-        outputs = self._create_pm(builder, ref, lr_multipliers)
+        confs, locs, ious = self._create_pm(builder, ref, lr_multipliers)
 
-        model = keras.models.Model(inputs=inputs, outputs=outputs)
+        if for_predict:
+            model = self._create_predict_network(inputs, confs, locs, ious)
+        else:
+            # いったんくっつける (損失関数の中で分割して使う)
+            outputs = keras.layers.concatenate([confs, locs, ious], axis=-1, name='outputs')
+            model = keras.models.Model(inputs=inputs, outputs=outputs)
 
         logger = tk.log.get(__name__)
         logger.info('network depth: %d', tk.dl.count_network_depth(model))
@@ -640,32 +624,18 @@ class ObjectDetector(object):
         return model, lr_multipliers
 
     @tk.log.trace()
-    def _create_basenet(self, builder, x):
+    def _create_basenet(self, builder, x, load_weights):
         """ベースネットワークの作成。"""
         import keras
-        import keras.backend as K
 
         def _freeze(model, freeze_end_layer):
-            import keras
             for layer in model.layers:
                 if layer.name == freeze_end_layer:
                     break
                 if not isinstance(layer, keras.layers.BatchNormalization):
                     layer.trainable = False
 
-        def _downblock(builder, x):
-            import keras.backend as K
-
-            map_size = K.int_shape(x)[1] // 2
-
-            x = builder.conv2d(256, (2, 2), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
-            x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
-
-            assert K.int_shape(x)[1] == map_size
-            return x, map_size
-
         ref_list = []
-
         lr_multipliers = {}
         if self.base_network == 'custom':
             x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
@@ -680,18 +650,18 @@ class ObjectDetector(object):
             x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
             ref_list.append(x)
         elif self.base_network == 'vgg16':
-            basenet = keras.applications.VGG16(include_top=False, input_tensor=x)
+            basenet = keras.applications.VGG16(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
             _freeze(basenet, 'block5_conv1')
             ref_list.append(basenet.get_layer(name='block4_pool').input)
             ref_list.append(basenet.get_layer(name='block5_pool').input)
         elif self.base_network == 'resnet50':
-            basenet = keras.applications.ResNet50(include_top=False, input_tensor=x)
+            basenet = keras.applications.ResNet50(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
             _freeze(basenet, 'res4f_branch2a')
             ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
             ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
             ref_list.append(basenet.get_layer(name='avg_pool').input)
         elif self.base_network == 'xception':
-            basenet = keras.applications.Xception(include_top=False, input_tensor=x)
+            basenet = keras.applications.Xception(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
             _freeze(basenet, 'block10_sepconv1_act')
             ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
             ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
@@ -700,19 +670,21 @@ class ObjectDetector(object):
             assert False
 
         x = ref_list[-1]
-
-        if K.int_shape(x)[-1] > 256:
+        if builder.shape(x)[-1] > 256:
             x = builder.conv2d(256, (1, 1), name='tail_sq')(x)
-        assert K.int_shape(x)[-1] == 256
+        assert builder.shape(x)[-1] == 256
 
         # downsampling
         while True:
-            x, map_size = _downblock(builder, x)
+            map_size = builder.shape(x)[1] // 2
+            x = builder.conv2d(256, (2, 2), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
+            x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
+            assert builder.shape(x)[1] == map_size
             ref_list.append(x)
             if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
                 break
 
-        ref = {'down{}'.format(K.int_shape(x)[1]): x for x in ref_list}
+        ref = {'down{}'.format(builder.shape(x)[1]): x for x in ref_list}
         return x, ref, lr_multipliers
 
     @tk.log.trace()
@@ -739,11 +711,11 @@ class ObjectDetector(object):
             sc = x
             x = shared_layers['conv1'](x)
             x = shared_layers['conv2'](x)
-            x = keras.layers.Add()([sc, x])
+            x = keras.layers.add([sc, x])
             sc = x
             x = shared_layers['conv3'](x)
             x = shared_layers['conv4'](x)
-            x = keras.layers.Add()([sc, x])
+            x = keras.layers.add([sc, x])
             x = builder.bn(name='pm{}_bn'.format(map_size))(x)
             x = builder.act(name='pm{}_act'.format(map_size))(x)
 
@@ -761,14 +733,10 @@ class ObjectDetector(object):
             locs.append(loc)
             ious.append(iou)
 
-        confs = keras.layers.Concatenate(axis=-2, name='output_confs')(confs)
-        locs = keras.layers.Concatenate(axis=-2, name='output_locs')(locs)
-        ious = keras.layers.Concatenate(axis=-2, name='output_ious')(ious)
-
-        # いったんくっつける (損失関数の中で分割して使う)
-        outputs = keras.layers.Concatenate(axis=-1, name='outputs')([confs, locs, ious])
-
-        return outputs
+        confs = keras.layers.concatenate(confs, axis=-2, name='output_confs')
+        locs = keras.layers.concatenate(locs, axis=-2, name='output_locs')
+        ious = keras.layers.concatenate(ious, axis=-2, name='output_ious')
+        return confs, locs, ious
 
     def _pm(self, builder, x, prefix):
         import keras
@@ -801,7 +769,6 @@ class ObjectDetector(object):
         """予測用ネットワークの作成"""
         import keras
         import keras.backend as K
-
         try:
             confs = model.get_layer(name='output_confs').output
             locs = model.get_layer(name='output_locs').output
@@ -811,6 +778,12 @@ class ObjectDetector(object):
             confs = keras.layers.Lambda(lambda c: c[:, :, :-5], K.int_shape(output)[1:-1] + (self.nb_classes,))(output)
             locs = keras.layers.Lambda(lambda c: c[:, :, -5:-1], K.int_shape(output)[1:-1] + (4,))(output)
             ious = keras.layers.Lambda(lambda c: c[:, :, -1:], K.int_shape(output)[1:-1] + (1,))(output)
+        return self._create_predict_network(model.inputs, confs, locs, ious)
+
+    def _create_predict_network(self, inputs, confs, locs, ious):
+        """予測用ネットワークの作成"""
+        import keras
+        import keras.backend as K
 
         def _class(confs):
             return K.argmax(confs[:, :, 1:], axis=-1) + 1
@@ -827,7 +800,7 @@ class ObjectDetector(object):
         objconfs = keras.layers.Lambda(_conf, K.int_shape(confs)[1:-1])([confs, ious])
         locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
 
-        return keras.models.Model(inputs=model.inputs, outputs=[objclasses, objconfs, locs])
+        return keras.models.Model(inputs=inputs, outputs=[objclasses, objconfs, locs])
 
     def create_generator(self, encode_truth=True):
         """ImageDataGeneratorを作って返す。"""

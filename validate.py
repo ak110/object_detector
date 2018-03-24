@@ -28,33 +28,28 @@ def _main():
     args = parser.parse_args()
 
     tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
-    _run(args)
+    with tk.dl.session():
+        _run(args)
 
 
 @tk.log.trace()
 def _run(args):
     logger = tk.log.get(__name__)
+
     # データの読み込み
     _, (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
 
-    with tk.dl.session():
-        # モデルの読み込み
-        od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-        model, _ = od.create_network()
-        model.load_weights(str(RESULT_DIR / 'model.h5'))
-        # マルチGPU対応
-        logger.info('gpu count = %d', tk.get_gpu_count())
-        model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
-        # 評価
-        _evaluate(od, model, X_test, y_test, batch_size, -1, class_names, RESULT_DIR)
+    # モデルの読み込み
+    od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
+    model, _ = od.create_network(load_weights=False, for_predict=True)
+    model.load_weights(str(RESULT_DIR / 'model.h5'), by_name=True)
 
+    # マルチGPU対応
+    logger.info('gpu count = %d', tk.get_gpu_count())
+    model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
 
-def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_dir):
-    """`mAP`を算出してprintする。"""
-    logger = tk.log.get(__name__)
-    predict_model = od.create_predict_network(model)
+    # 評価
     gen = od.create_generator()
-
     pred_classes_list = []
     pred_confs_list = []
     pred_locs_list = []
@@ -62,7 +57,7 @@ def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_
     with tqdm(total=len(X_test), unit='f', desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
             # 予測
-            pred_classes, pred_confs, pred_locs = predict_model.predict(X_batch)
+            pred_classes, pred_confs, pred_locs = model.predict(X_batch)
             # NMSなど
             pred_classes, pred_confs, pred_locs = od.select_predictions(
                 pred_classes, pred_confs, pred_locs, parallel=parallel)
@@ -73,7 +68,7 @@ def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_
             # TODO: assignでmaxのみ取ってきたい
             # 先頭部分のみ可視化
             if i == 0:
-                save_dir = result_dir / '___check'
+                save_dir = RESULT_DIR / '___check'
                 for j, (pcl, pcf, pl) in enumerate(zip(pred_classes, pred_confs, pred_locs)):
                     mask = pcf >= 0.5  # 表示はある程度絞る (mAP算出のためには片っ端からリストアップしているため)
                     if not mask.any():
@@ -86,6 +81,7 @@ def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_
             if i + 1 >= steps:
                 break
 
+    # mAP
     gt_classes_list = np.array([y.classes for y in y_test])
     gt_bboxes_list = np.array([y.bboxes for y in y_test])
     gt_difficults_list = np.array([y.difficults for y in y_test])
@@ -95,11 +91,7 @@ def _evaluate(od, model, X_test, y_test, batch_size, epoch, class_names, result_
     map2 = tk.ml.compute_map(gt_classes_list, gt_bboxes_list, gt_difficults_list,
                              pred_classes_list, pred_confs_list, pred_locs_list,
                              use_voc2007_metric=True)
-
-    import sys
-    sys.stdout.flush()
-    sys.stderr.flush()
-    logger.info('epoch={:2d} mAP={:.4f} mAP(VOC2007)={:.4f}'.format(epoch + 1, map1, map2))
+    logger.info(f'mAP={map1:.4f} mAP(VOC2007)={map2:.4f}')
 
 
 if __name__ == '__main__':
