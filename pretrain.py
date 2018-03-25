@@ -44,16 +44,6 @@ def _run(args):
     image_size = (96, 96)
     model = od.create_pretrain_network(image_size)
 
-    # 学習率：
-    # ・CIFARなどの分類ではlr 0.5、batch size 256くらいが多いのでその辺を基準に。
-    # ・バッチサイズに比例させると良さそう？
-    base_lr = 0.5 * (args.batch_size / 256) * hvd.size()
-
-    with tk.log.trace_scope('model.compile'):
-        opt = tk.dl.nsgd()(lr=base_lr)
-        opt = hvd.DistributedOptimizer(opt)
-        model.compile(opt, 'mse', ['mae'])
-
     gen = tk.image.ImageDataGenerator()
     gen.add(tk.image.RandomFlipLR(probability=0.5))
     gen.add(tk.image.RandomPadding(probability=1))
@@ -64,27 +54,24 @@ def _run(args):
     gen.add(tk.image.RandomErasing(probability=0.5))
     gen.add(tk.image.ProcessInput(od.get_preprocess_input(), batch_axis=True))
 
+    model = tk.dl.models.Model(model, gen, use_horovod=True)
+
+    base_lr = 0.5 * args.batch_size * hvd.size() / 256
+    model.compile(tk.dl.optimizers.nsgd()(lr=base_lr), 'mse', ['mae'])
+
     callbacks = []
-    callbacks.append(tk.dl.learning_rate_callback())
-    callbacks.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
-    callbacks.append(hvd.callbacks.MetricAverageCallback())
-    callbacks.append(hvd.callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1))
+    callbacks.append(tk.dl.callbacks.learning_rate())
+    callbacks.extend(model.horovod_callbacks())
     if hvd.rank() == 0:
-        callbacks.append(tk.dl.tsv_log_callback(RESULT_DIR / 'pretrain.history.tsv'))
-        callbacks.append(tk.dl.logger_callback())
-    callbacks.append(tk.dl.freeze_bn_callback(0.95))
+        callbacks.append(tk.dl.callbacks.tsv_logger(RESULT_DIR / 'pretrain.history.tsv'))
+        callbacks.append(tk.dl.callbacks.epoch_logger())
+    callbacks.append(tk.dl.callbacks.freeze_bn(0.95))
 
-    model.fit_generator(
-        gen.flow(X_train, y_train, batch_size=args.batch_size, data_augmentation=True, shuffle=True),
-        steps_per_epoch=gen.steps_per_epoch(len(X_train), args.batch_size) // hvd.size(),
-        epochs=args.epochs,
-        verbose=1 if hvd.rank() == 0 else 0,
-        validation_data=gen.flow(X_test, y_test, batch_size=args.batch_size, shuffle=True),
-        validation_steps=gen.steps_per_epoch(len(X_test), args.batch_size) // hvd.size(),  # horovodのサンプルでは * 3 だけど早く進んで欲しいので省略
-        callbacks=callbacks)
-
+    model.fit(X_train, y_train,
+              batch_size=args.batch_size, epochs=args.epochs, callbacks=callbacks,
+              validation_data=(X_test, y_test))
     if hvd.rank() == 0:
-        model.save(str(RESULT_DIR / 'pretrain.model.h5'))
+        model.model.save(str(RESULT_DIR / 'pretrain.model.h5'))
 
 
 if __name__ == '__main__':

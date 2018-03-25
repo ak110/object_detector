@@ -40,7 +40,7 @@ def _report_net(args):
                 model.summary(print_fn=lambda x: f.write(x + '\n'))
 
         with tk.log.trace_scope('model.params.png'):
-            tk.dl.plot_model_params(model, args.result_dir / 'model.params.png')
+            tk.dl.models.plot_model_params(model, args.result_dir / 'model.params.png')
 
         with tk.log.trace_scope('model.png'):
             try:

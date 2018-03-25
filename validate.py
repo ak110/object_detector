@@ -40,7 +40,7 @@ def _run(args):
 
     # マルチGPU対応
     logger.info('gpu count = %d', tk.get_gpu_count())
-    model, batch_size = tk.dl.create_data_parallel_model(model, args.batch_size)
+    model, batch_size = tk.dl.models.multi_gpu_model(model, args.batch_size)
 
     # 評価
     gen = od.create_generator()
@@ -48,7 +48,7 @@ def _run(args):
     pred_confs_list = []
     pred_locs_list = []
     steps = gen.steps_per_epoch(len(X_test), batch_size)
-    with tk.tqdm(total=len(X_test), unit='f', desc='evaluate') as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
+    with tk.tqdm(total=len(X_test), unit='f', desc='evaluate') as pbar, joblib.Parallel(batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
             # 予測
             pred_classes, pred_confs, pred_locs = model.predict(X_batch)

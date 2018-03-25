@@ -68,7 +68,7 @@ def _make_teacher_data():
     X = np.concatenate([X_train, X_test])
 
     teacher_model = keras.applications.Xception(include_top=False, input_shape=(71, 71, 3))
-    teacher_model, batch_size = tk.dl.create_data_parallel_model(teacher_model, batch_size)
+    teacher_model, batch_size = tk.dl.models.multi_gpu_model(teacher_model, batch_size)
     gen = tk.image.ImageDataGenerator()
     gen.add(tk.image.Resize((71, 71)))
     gen.add(tk.image.ProcessInput(keras.applications.xception.preprocess_input, batch_axis=True))

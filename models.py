@@ -276,8 +276,7 @@ class ObjectDetector(object):
         delta_locs = np.concatenate(rec_delta_locs)
         logger.info('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
                     delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
-
-        # ヒストグラム色々を出力
+        # ヒストグラム色々
         rec_mean_abs_delta = [np.mean(np.abs(dl)) for dl in rec_delta_locs]
         tk.math.print_histgram(unrec_widths, name='unrec_widths', print_fn=logger.info)
         tk.math.print_histgram(unrec_heights, name='unrec_heights', print_fn=logger.info)
@@ -485,11 +484,11 @@ class ObjectDetector(object):
         """分類のloss。"""
         import keras.backend as K
         if True:
-            loss = tk.dl.categorical_focal_loss(gt_confs, pred_confs)
+            loss = tk.dl.losses.categorical_focal_loss(gt_confs, pred_confs)
             loss *= np.expand_dims(self.pb_mask, axis=0)
             loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
         else:
-            loss = tk.dl.categorical_crossentropy(gt_confs, pred_confs, alpha=0.75)
+            loss = tk.dl.losses.categorical_crossentropy(gt_confs, pred_confs, alpha=0.75)
             loss *= np.expand_dims(self.pb_mask, axis=0)
             loss = K.mean(loss, axis=-1)
         return loss
@@ -498,7 +497,7 @@ class ObjectDetector(object):
     def _loss_loc(gt_locs, pred_locs, obj_mask, obj_count):
         """位置のloss。"""
         import keras.backend as K
-        loss = tk.dl.l1_smooth_loss(gt_locs, pred_locs)
+        loss = tk.dl.losses.l1_smooth_loss(gt_locs, pred_locs)
         loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
         return loss
 
@@ -534,7 +533,7 @@ class ObjectDetector(object):
     def create_pretrain_network(self, image_size):
         """事前学習用モデルの作成。"""
         import keras
-        builder = tk.dl.Builder()
+        builder = tk.dl.layers.Builder()
 
         x = inputs = keras.layers.Input(image_size + (3,))
         x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
@@ -545,8 +544,8 @@ class ObjectDetector(object):
         model = keras.models.Model(inputs=inputs, outputs=x)
 
         logger = tk.log.get(__name__)
-        logger.info('network depth: %d', tk.dl.count_network_depth(model))
-        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
+        logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
+        logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
 
         return model
 
@@ -554,7 +553,7 @@ class ObjectDetector(object):
     def create_network(self, load_weights=True, for_predict=False):
         """モデルの作成。"""
         import keras
-        builder = tk.dl.Builder()
+        builder = tk.dl.layers.Builder()
 
         def _upblock(builder, x, ref, map_size):
             in_map_size = builder.shape(x)[1]
@@ -606,8 +605,8 @@ class ObjectDetector(object):
             model = keras.models.Model(inputs=inputs, outputs=outputs)
 
         logger = tk.log.get(__name__)
-        logger.info('network depth: %d', tk.dl.count_network_depth(model))
-        logger.info('trainable params: %d', tk.dl.count_trainable_params(model))
+        logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
+        logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
 
         return model, lr_multipliers
 
@@ -731,7 +730,7 @@ class ObjectDetector(object):
         # conf/loc/iou
         conf = builder.conv2d(self.nb_classes, (1, 1),
                               kernel_initializer='zeros',
-                              bias_initializer=tk.dl.od_bias_initializer(self.nb_classes),
+                              bias_initializer=tk.dl.losses.od_bias_initializer(self.nb_classes),
                               bias_regularizer=None,
                               activation='softmax',
                               use_bn=False,
