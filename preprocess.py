@@ -42,8 +42,7 @@ def _run(args):
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
     od.save(RESULT_DIR / 'model.pkl')
     od.summary()
-    # prior boxのカバー度合いのチェック
-    od.check_prior_boxes(RESULT_DIR, y_test, class_names)
+    od.check_prior_boxes(y_test, class_names)
 
     # ついでに、試しに回答を出力してみる
     check_true_size = 32

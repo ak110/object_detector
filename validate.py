@@ -58,8 +58,6 @@ def _run(args):
             pred_classes_list.extend(pred_classes)
             pred_confs_list.extend(pred_confs)
             pred_locs_list.extend(pred_locs)
-            # prior box毎の再現率などの調査
-            # TODO: assignでmaxのみ取ってきたい
             # 先頭部分のみ可視化
             if i == 0:
                 save_dir = RESULT_DIR / '___check'

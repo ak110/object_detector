@@ -193,7 +193,7 @@ class ObjectDetector(object):
             ], axis=-1)
             return xp.clip(decoded, 0, 1)
 
-    def check_prior_boxes(self, result_dir, y_test: [tk.ml.ObjectsAnnotation], class_names):
+    def check_prior_boxes(self, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対してprior boxがどれくらいマッチしてるか調べる。"""
         y_true = []
         y_pred = []
@@ -278,23 +278,12 @@ class ObjectDetector(object):
                     delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
 
         # ヒストグラム色々を出力
-        import matplotlib.pyplot as plt
-        plt.hist(unrec_widths, bins=32)
-        plt.gcf().savefig(str(result_dir / 'unrec_widths.hist.png'))
-        plt.close()
-        plt.hist(unrec_heights, bins=32)
-        plt.gcf().savefig(str(result_dir / 'unrec_heights.hist.png'))
-        plt.close()
-        plt.xscale('log')
-        plt.hist(unrec_ars, bins=32)
-        plt.gcf().savefig(str(result_dir / 'unrec_ars.hist.png'))
-        plt.close()
-        plt.hist([np.mean(np.abs(dl)) for dl in rec_delta_locs], bins=32)
-        plt.gcf().savefig(str(result_dir / 'rec_mean_abs_delta.hist.png'))
-        plt.close()
-        plt.hist(assigned_count_list, bins=32)
-        plt.gcf().savefig(str(result_dir / 'assigned_count.hist.png'))
-        plt.close()
+        rec_mean_abs_delta = [np.mean(np.abs(dl)) for dl in rec_delta_locs]
+        tk.math.print_histgram(unrec_widths, name='unrec_widths', print_fn=logger.info)
+        tk.math.print_histgram(unrec_heights, name='unrec_heights', print_fn=logger.info)
+        tk.math.print_histgram(unrec_ars, name='unrec_ars', print_fn=logger.info)
+        tk.math.print_histgram(rec_mean_abs_delta, name='rec_mean_abs_delta', print_fn=logger.info)
+        tk.math.print_histgram(assigned_count_list, name='assigned_count', print_fn=logger.info)
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
         """学習用の`y_true`の作成。
