@@ -5,7 +5,6 @@ import numpy as np
 import sklearn.cluster
 import sklearn.externals.joblib as joblib
 import sklearn.metrics
-from tqdm import tqdm
 
 import pytoolkit as tk
 
@@ -209,7 +208,7 @@ class ObjectDetector(object):
 
         total_gt_boxes = sum([np.sum(np.logical_not(y.difficults)) for y in y_test])
 
-        for y in tqdm(y_test, desc='check_prior_boxes', ascii=True, ncols=100):
+        for y in tk.tqdm(y_test, desc='check_prior_boxes'):
             # 割り当ててみる
             assigned_pb_list, assigned_gt_list, assigned_iou_list = self._assign_boxes(y.bboxes)
 
@@ -807,15 +806,7 @@ class ObjectDetector(object):
         gen = tk.image.ImageDataGenerator()
         gen.add(tk.image.CustomAugmentation(self._transform, probability=1))
         gen.add(tk.image.Resize(self.image_size))
-        gen.add(tk.image.RandomAugmentors([
-            tk.image.RandomBlur(probability=0.5),
-            tk.image.RandomUnsharpMask(probability=0.5),
-            tk.image.GaussianNoise(probability=0.5),
-            tk.image.RandomSaturation(probability=0.5),
-            tk.image.RandomBrightness(probability=0.5),
-            tk.image.RandomContrast(probability=0.5),
-            tk.image.RandomHue(probability=0.5),
-        ]))
+        gen.add(tk.image.RandomColorAugmentors(probability=0.5))
         gen.add(tk.image.RandomErasing(probability=0.5))
         gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
         if encode_truth:

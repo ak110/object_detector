@@ -3,7 +3,6 @@
 import pathlib
 
 import numpy as np
-from tqdm import tqdm
 
 import models
 import pytoolkit as tk
@@ -26,7 +25,7 @@ def _main():
 
     od = models.ObjectDetector('xception', input_size=512, map_sizes=[], nb_classes=100, mean_objets=0, pb_size_patterns=np.array([[1.5, 0.5]]))
     gen = od.create_generator(encode_truth=False)
-    for i, (X_batch, y_batch) in zip(tqdm(range(16), ascii=True, ncols=100), gen.flow(X_test, y_test, data_augmentation=True)):
+    for i, (X_batch, y_batch) in zip(tk.tqdm(range(16)), gen.flow(X_test, y_test, data_augmentation=True)):
         for X, y in zip(X_batch, y_batch):
             img = tk.image.unpreprocess_input_abs1(X)
             tk.ml.plot_objects(

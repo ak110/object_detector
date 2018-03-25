@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import PIL.Image
 import sklearn.externals.joblib as joblib
-from tqdm import tqdm
 
 import pytoolkit as tk
 
@@ -66,7 +65,7 @@ def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
     # ファイル名の一覧
     X = np.unique(df['filename'].values)
     y = []
-    for x in tqdm(X, desc='images', ncols=100, ascii=True):
+    for x in tk.tqdm(X, desc='images'):
         # 画像サイズの取得
         with PIL.Image.open(image_dir / x) as img:
             width, height = img.size

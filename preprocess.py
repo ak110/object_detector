@@ -3,10 +3,8 @@
 import argparse
 import pathlib
 
-import better_exceptions
 import numpy as np
 import sklearn.externals.joblib as joblib
-from tqdm import tqdm
 
 import data
 import models
@@ -19,17 +17,13 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _main():
-    better_exceptions.MAX_LENGTH = 100
-    import matplotlib as mpl
-    mpl.use('Agg')
-
+    tk.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-type', help='データの種類。', default='voc', choices=['voc', 'csv'])
     parser.add_argument('--base-network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320、512など。', default=320, type=int)
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10, 5], type=int)
     args = parser.parse_args()
-
     tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
     _run(args)
 
@@ -82,7 +76,7 @@ def _make_teacher_data():
     steps = gen.steps_per_epoch(len(X), batch_size)
 
     pred_list = []
-    with tqdm(total=len(X), desc='make data', ascii=True, ncols=100) as pbar:
+    with tk.tqdm(total=len(X), desc='make data') as pbar:
         for i, X_batch in enumerate(gen.flow(X, batch_size=batch_size)):
             pred_list.append(teacher_model.predict(X_batch))
             pbar.update(len(X_batch))

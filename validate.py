@@ -3,10 +3,8 @@
 import argparse
 import pathlib
 
-import better_exceptions
 import numpy as np
 import sklearn.externals.joblib as joblib
-from tqdm import tqdm
 
 import data
 import models
@@ -18,15 +16,11 @@ RESULT_DIR = BASE_DIR / 'results'
 
 
 def _main():
-    better_exceptions.MAX_LENGTH = 100
-    import matplotlib as mpl
-    mpl.use('Agg')
-
+    tk.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-type', help='データの種類。', default='pkl', choices=['voc', 'csv', 'pkl'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
-
     tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
     with tk.dl.session():
         _run(args)
@@ -54,7 +48,7 @@ def _run(args):
     pred_confs_list = []
     pred_locs_list = []
     steps = gen.steps_per_epoch(len(X_test), batch_size)
-    with tqdm(total=len(X_test), unit='f', desc='evaluate', ascii=True, ncols=100) as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
+    with tk.tqdm(total=len(X_test), unit='f', desc='evaluate') as pbar, joblib.Parallel(n_jobs=batch_size, backend='threading') as parallel:
         for i, X_batch in enumerate(gen.flow(X_test, batch_size=batch_size)):
             # 予測
             pred_classes, pred_confs, pred_locs = model.predict(X_batch)

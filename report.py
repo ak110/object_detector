@@ -13,16 +13,12 @@ DATA_DIR = BASE_DIR / 'data'
 
 
 def _main():
-    import matplotlib
-    matplotlib.use('Agg')
-
+    tk.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', help='動作種別', nargs='?', default='all', choices=['net', 'history', 'all'])
     parser.add_argument('--result-dir', help='resultsディレクトリのパス。', type=pathlib.Path, default=BASE_DIR / 'results')
     args = parser.parse_args()
-
     tk.log.init(None, stream_level='DEBUG')
-
     if args.mode == 'net':
         _report_net(args)
     elif args.mode == 'history':
