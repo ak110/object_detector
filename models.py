@@ -452,7 +452,7 @@ class ObjectDetector(object):
             obj_count = K.sum(obj_mask, axis=-1)
             return self._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
 
-        def loss_iou(self, y_true, y_pred):
+        def loss_iou(y_true, y_pred):
             """IOUの損失項。(metrics用)"""
             gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
             pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
