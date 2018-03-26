@@ -4,8 +4,8 @@ import argparse
 import pathlib
 
 import horovod.keras as hvd
+import sklearn.externals.joblib as joblib
 
-import data
 import models
 import pytoolkit as tk
 
@@ -30,8 +30,11 @@ def _main():
 @tk.log.trace()
 def _run(args):
     logger = tk.log.get(__name__)
+
     # データの読み込み
-    (X_train, y_train), (X_test, y_test), _ = data.load_data(DATA_DIR, 'pkl')
+    y_train, y_test, _ = joblib.load(DATA_DIR / 'train_data.pkl')
+    X_train = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_train)
+    X_test = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_test)
 
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')

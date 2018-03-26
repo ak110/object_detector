@@ -6,7 +6,6 @@ import pathlib
 import numpy as np
 import sklearn.externals.joblib as joblib
 
-import data
 import models
 import pytoolkit as tk
 
@@ -18,7 +17,6 @@ RESULT_DIR = BASE_DIR / 'results'
 def _main():
     tk.better_exceptions()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data-type', help='データの種類。', default='pkl', choices=['voc', 'csv', 'pkl'])
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
     tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log'))
@@ -31,7 +29,8 @@ def _run(args):
     logger = tk.log.get(__name__)
 
     # データの読み込み
-    _, (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
+    _, y_test, class_names = joblib.load(DATA_DIR / 'train_data.pkl')
+    X_test = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_test)
 
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')

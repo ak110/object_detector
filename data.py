@@ -13,15 +13,13 @@ import pytoolkit as tk
 @tk.log.trace()
 def load_data(data_dir, data_type: str):
     """データの読み込み"""
-    assert data_type in ('voc', 'csv', 'pkl')
+    assert data_type in ('voc', 'csv')
     data_dir = pathlib.Path(data_dir)
 
     if data_type == 'voc':
         y_train, y_test, class_names = load_data_voc(data_dir)
-    elif data_type == 'csv':
-        y_train, y_test, class_names = load_data_csv(data_dir)
     else:
-        y_train, y_test, class_names = load_data_pkl(data_dir)
+        y_train, y_test, class_names = load_data_csv(data_dir)
 
     X_train = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_train)
     X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
@@ -89,10 +87,3 @@ def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
             difficults=None))
     return np.array(y)
 
-
-def load_data_pkl(data_dir: pathlib.Path):
-    """データの読み込み"""
-    y_train = joblib.load(data_dir / 'y_train.pkl')
-    y_test = joblib.load(data_dir / 'y_test.pkl')
-    class_names = joblib.load(data_dir / 'class_names.pkl')
-    return y_train, y_test, class_names

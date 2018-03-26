@@ -34,9 +34,7 @@ def _run(args):
     # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
     logger.info('データの読み込み: data-dir=%s data-type=%s', DATA_DIR, args.data_type)
     (_, y_train), (X_test, y_test), class_names = data.load_data(DATA_DIR, args.data_type)
-    joblib.dump(y_train, DATA_DIR / 'y_train.pkl')
-    joblib.dump(y_test, DATA_DIR / 'y_test.pkl')
-    joblib.dump(class_names, DATA_DIR / 'class_names.pkl')
+    joblib.dump((y_train, y_test, class_names), DATA_DIR / 'train_data.pkl')
 
     # 訓練データからパラメータを適当に決める
     od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
