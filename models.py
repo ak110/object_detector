@@ -38,17 +38,16 @@ class ObjectDetector(object):
         bboxes_sizes = bboxes[:, 2:] - bboxes[:, :2]
         bb_base_sizes = bboxes_sizes.min(axis=-1)  # 短辺のサイズのリスト
         bb_base_areas = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
-
-        # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         assert (bb_base_sizes >= 0).all()  # 不正なデータは含まれない想定 (手抜き)
         assert (bb_base_sizes < 1).all()  # 不正なデータは含まれない想定 (手抜き)
+
+        # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         tile_sizes = 1 / map_sizes
         bboxes_size_patterns = []
         for ti, tile_size in enumerate(tile_sizes):
-            min_tile_size = 0 if tile_size == tile_sizes.min() else tile_size
+            min_tile_size = 0 if tile_size == tile_sizes.min() else tile_size / 2  # 倍～半分くらいをカバーさせる
             max_tile_size = 1 if tile_size == tile_sizes.max() else tile_sizes[ti + 1]
-            mask = np.logical_and(bb_base_sizes >= min_tile_size, bb_base_sizes < max_tile_size)
-            mask = np.logical_and(mask, bb_base_areas < 0.8)  # 0.8以上のものは中央専用のprior boxを使用
+            mask = np.logical_and(bb_base_areas >= min_tile_size, bb_base_areas < max_tile_size)
             bboxes_size_patterns.append(bboxes_sizes[mask] / tile_size)
         bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
         assert len(bboxes_size_patterns.shape) == 2
@@ -71,8 +70,6 @@ class ObjectDetector(object):
         # 1 / fm_countに対する、prior boxの基準サイズの割合。[1.5, 0.5] なら横が1.5倍、縦が0.5倍のものを用意。
         # 面積昇順に並べ替えておく。
         self.pb_size_patterns = pb_size_patterns[pb_size_patterns.prod(axis=-1).argsort(), :].astype(np.float32)
-        # 画像全体用のprior boxのサイズのリスト
-        self.pb_center_size_patterns = np.array([[0.8, 0.8], [0.8, 1.0], [1.0, 0.8], [1.0, 1.0]])
         # 1 / fm_countに対する、prior boxの基準サイズの割合。(縦横の相乗平均)
         self.pb_size_ratios = np.sort(np.sqrt(pb_size_patterns[:, 0] * pb_size_patterns[:, 1]))
         # アスペクト比のリスト
@@ -92,7 +89,6 @@ class ObjectDetector(object):
         self.pb_info = []
 
         self._add_prior_boxes(self.map_sizes, self.pb_size_patterns)
-        self._add_prior_boxes([1], self.pb_center_size_patterns)
         self.pb_grid = np.array(self.pb_grid)
         self.pb_locs = np.array(self.pb_locs)
         self.pb_info_indices = np.array(self.pb_info_indices)
@@ -106,12 +102,12 @@ class ObjectDetector(object):
         self.pb_mask = np.logical_and(self.pb_grid >= 0, self.pb_grid <= 1 + (1 / self.image_size[0])).all(axis=-1)
 
         nb_pboxes = len(self.pb_locs)
-        assert self.pb_locs.shape == (nb_pboxes, 4), 'shape error: {}'.format(self.pb_locs.shape)
-        assert self.pb_info_indices.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_info_indices.shape)
-        assert self.pb_centers.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_centers.shape)
-        assert self.pb_sizes.shape == (nb_pboxes, 2), 'shape error: {}'.format(self.pb_sizes.shape)
-        assert self.pb_mask.shape == (nb_pboxes,), 'shape error: {}'.format(self.pb_mask.shape)
-        assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns) + len(self.pb_center_size_patterns)
+        assert self.pb_locs.shape == (nb_pboxes, 4), f'shape error: {self.pb_locs.shape}'
+        assert self.pb_info_indices.shape == (nb_pboxes,), f'shape error: {self.pb_info_indices.shape}'
+        assert self.pb_centers.shape == (nb_pboxes, 2), f'shape error: {self.pb_centers.shape}'
+        assert self.pb_sizes.shape == (nb_pboxes, 2), f'shape error: {self.pb_sizes.shape}'
+        assert self.pb_mask.shape == (nb_pboxes,), f'shape error: {self.pb_mask.shape}'
+        assert len(self.pb_info) == len(self.map_sizes) * len(self.pb_size_patterns)
 
     def _add_prior_boxes(self, map_sizes, pb_size_patterns):
         """基準となるbox(prior box)の座標(x1, y1, x2, y2)の並びを返す。"""
@@ -326,7 +322,7 @@ class ObjectDetector(object):
             bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
             pb_center_mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
             pb_center_mask = np.logical_and(pb_center_mask, self.pb_mask)
-            assert pb_center_mask.any(), 'Encode error: {}'.format(bb_center)
+            assert pb_center_mask.any(), f'Encode error: {bb_center}'
             # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
             iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
             iou_mask = iou >= 0.5
@@ -555,45 +551,40 @@ class ObjectDetector(object):
         import keras
         builder = tk.dl.layers.Builder()
 
-        def _upblock(builder, x, ref, map_size):
-            in_map_size = builder.shape(x)[1]
-            assert map_size % in_map_size == 0
-            up_size = map_size // in_map_size
-
-            x = keras.layers.Dropout(0.5)(x)
-            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 kernel_initializer='zeros',
-                                 use_bias=False, use_bn=False, use_act=False,
-                                 name='up{}_us'.format(map_size))(x)
-            t = ref['down{}'.format(map_size)]
-            t = builder.conv2d(256, (1, 1), use_act=False, name='up{}_lt'.format(map_size))(t)
-            x = keras.layers.add([x, t], name='up{}_mix'.format(map_size))
-            x = builder.bn(name='up{}_mix_bn'.format(map_size))(x)
-            x = builder.act(name='up{}_mix_act'.format(map_size))(x)
-            x = builder.conv2d(256, (3, 3), name='up{}_conv1'.format(map_size))(x)
-            x = builder.conv2d(256, (3, 3), name='up{}_conv2'.format(map_size))(x)
-
-            ref['out{}'.format(map_size)] = x
-            return x
-
         # downsampling (ベースネットワーク)
         x = inputs = keras.layers.Input(self.image_size + (3,))
         x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
-        # 欲しいサイズがちゃんとあるかチェック
-        for map_size in self.map_sizes:
-            assert 'down{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
-        # center
         map_size = builder.shape(x)[1]
+
+        # center
         x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
         x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
-        x = builder.conv2d(64, (map_size, map_size), padding='valid', name='center_ds')(x)
-        ref['out{}'.format(1)] = x
+        x = keras.layers.AveragePooling2D((map_size, map_size), name='center_ds')(x)
+        x = builder.conv2d(256, (1, 1), name='center_dense')(x)
+        ref[f'out{1}'] = x
+
         # upsampling
         while True:
-            x = _upblock(builder, x, ref, map_size)
+            in_map_size = builder.shape(x)[1]
+            assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
+            up_size = map_size // in_map_size
+            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
+                                 kernel_initializer='zeros',
+                                 use_bias=False, use_bn=False, use_act=False,
+                                 name=f'up{map_size}_us')(x)
+            t = ref[f'down{map_size}']
+            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{map_size}_lt')(t)
+            x = keras.layers.add([x, t], name=f'up{map_size}_mix')
+            x = builder.bn(name=f'up{map_size}_mix_bn')(x)
+            x = builder.act(name=f'up{map_size}_mix_act')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{map_size}_conv1')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{map_size}_conv2')(x)
+            ref[f'out{map_size}'] = x
+
             if self.map_sizes[0] <= map_size:
                 break
             map_size *= 2
+
         # prediction module
         confs, locs, ious = self._create_pm(builder, ref, lr_multipliers)
 
@@ -664,14 +655,14 @@ class ObjectDetector(object):
         # downsampling
         while True:
             map_size = builder.shape(x)[1] // 2
-            x = builder.conv2d(256, (2, 2), strides=(2, 2), name='down{}_ds'.format(map_size))(x)
-            x = builder.conv2d(256, (3, 3), name='down{}_conv'.format(map_size))(x)
+            x = builder.conv2d(256, (2, 2), strides=(2, 2), name=f'down{map_size}_ds')(x)
+            x = builder.conv2d(256, (3, 3), name=f'down{map_size}_conv')(x)
             assert builder.shape(x)[1] == map_size
             ref_list.append(x)
             if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
                 break
 
-        ref = {'down{}'.format(builder.shape(x)[1]): x for x in ref_list}
+        ref = {f'down{builder.shape(x)[1]}': x for x in ref_list}
         return x, ref, lr_multipliers
 
     @tk.log.trace()
@@ -679,93 +670,63 @@ class ObjectDetector(object):
         """Prediction module."""
         import keras
 
-        shared_layers = {
-            'conv0': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv0'),
-            'conv1': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv1'),
-            'conv2': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv2'),
-            'conv3': builder.conv2d(256, (3, 3), activation='elu', use_bn=False, use_act=False, name='pm_shared_conv3'),
-            'conv4': builder.conv2d(256, (3, 3), activation=None, use_bn=False, use_act=False, name='pm_shared_conv4'),
-        }
+        old_gn = builder.use_gn
+        builder.use_gn = True  # TODO: いまいち…
+
+        shared_layers = {}
+        for pat_ix in range(len(self.pb_size_patterns)):
+            shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
+            shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
+            shared_layers[f'pm-{pat_ix}_conf'] = builder.conv2d(
+                self.nb_classes, (1, 1),
+                kernel_initializer='zeros',
+                bias_initializer=tk.dl.losses.od_bias_initializer(self.nb_classes),
+                bias_regularizer=None,
+                activation='softmax',
+                use_bn=False,
+                name=f'pm-{pat_ix}_conf')
+            shared_layers[f'pm-{pat_ix}_loc'] = builder.conv2d(
+                4, (1, 1),
+                kernel_initializer='zeros',
+                use_bn=False,
+                use_act=False,
+                name=f'pm-{pat_ix}_loc')
+            shared_layers[f'pm-{pat_ix}_iou'] = builder.conv2d(
+                1, (1, 1),
+                kernel_initializer='zeros',
+                activation='sigmoid',
+                use_bn=False,
+                name=f'pm-{pat_ix}_iou')
+
         for layer in shared_layers.values():
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [1 / len(self.map_sizes)] * len(w)))  # 共有部分の学習率調整
 
         confs, locs, ious = [], [], []
         for map_size in self.map_sizes:
-            assert 'out{}'.format(map_size) in ref, 'map_size error: {}'.format(ref)
-            x = ref['out{}'.format(map_size)]
-            x = shared_layers['conv0'](x)
-            sc = x
-            x = shared_layers['conv1'](x)
-            x = shared_layers['conv2'](x)
-            x = keras.layers.add([sc, x])
-            sc = x
-            x = shared_layers['conv3'](x)
-            x = shared_layers['conv4'](x)
-            x = keras.layers.add([sc, x])
-            x = builder.bn(name='pm{}_bn'.format(map_size))(x)
-            x = builder.act(name='pm{}_act'.format(map_size))(x)
-
+            assert f'out{map_size}' in ref, f'map_size error: {ref}'
+            map_out = ref[f'out{map_size}']
             for pat_ix in range(len(self.pb_size_patterns)):
-                prefix = 'pm{}-{}'.format(map_size, pat_ix)
-                conf, loc, iou = self._pm(builder, x, prefix)
+                x = map_out
+                x = shared_layers[f'pm-{pat_ix}_conv1'](x)
+                x = shared_layers[f'pm-{pat_ix}_conv2'](x)
+                conf = shared_layers[f'pm-{pat_ix}_conf'](x)
+                loc = shared_layers[f'pm-{pat_ix}_loc'](x)
+                iou = shared_layers[f'pm-{pat_ix}_iou'](x)
+                conf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_reshape_conf')(conf)
+                loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_reshape_loc')(loc)
+                iou = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_reshape_iou')(iou)
                 confs.append(conf)
                 locs.append(loc)
                 ious.append(iou)
 
-        for pat_ix in range(len(self.pb_center_size_patterns)):
-            prefix = 'pm{}-{}'.format(1, pat_ix)
-            conf, loc, iou = self._pm(builder, ref['out{}'.format(1)], prefix)
-            confs.append(conf)
-            locs.append(loc)
-            ious.append(iou)
-
         confs = keras.layers.concatenate(confs, axis=-2, name='output_confs')
         locs = keras.layers.concatenate(locs, axis=-2, name='output_locs')
         ious = keras.layers.concatenate(ious, axis=-2, name='output_ious')
+
+        builder.use_gn = old_gn
+
         return confs, locs, ious
-
-    def _pm(self, builder, x, prefix):
-        import keras
-        # conf/loc/iou
-        conf = builder.conv2d(self.nb_classes, (1, 1),
-                              kernel_initializer='zeros',
-                              bias_initializer=tk.dl.losses.od_bias_initializer(self.nb_classes),
-                              bias_regularizer=None,
-                              activation='softmax',
-                              use_bn=False,
-                              name=prefix + '_conf')(x)
-        loc = builder.conv2d(4, (1, 1),
-                             kernel_initializer='zeros',
-                             use_bn=False,
-                             use_act=False,
-                             name=prefix + '_loc')(x)
-        iou = builder.conv2d(1, (1, 1),
-                             kernel_initializer='zeros',
-                             activation='sigmoid',
-                             use_bn=False,
-                             name=prefix + '_iou')(x)
-        # reshape
-        conf = keras.layers.Reshape((-1, self.nb_classes), name=prefix + '_reshape_conf')(conf)
-        loc = keras.layers.Reshape((-1, 4), name=prefix + '_reshape_loc')(loc)
-        iou = keras.layers.Reshape((-1, 1), name=prefix + '_reshape_iou')(iou)
-        return conf, loc, iou
-
-    @tk.log.trace()
-    def create_predict_network(self, model):
-        """予測用ネットワークの作成"""
-        import keras
-        import keras.backend as K
-        try:
-            confs = model.get_layer(name='output_confs').output
-            locs = model.get_layer(name='output_locs').output
-            ious = model.get_layer(name='output_ious').output
-        except ValueError:
-            output = model.outputs[0]  # マルチGPU対策。。
-            confs = keras.layers.Lambda(lambda c: c[:, :, :-5], K.int_shape(output)[1:-1] + (self.nb_classes,))(output)
-            locs = keras.layers.Lambda(lambda c: c[:, :, -5:-1], K.int_shape(output)[1:-1] + (4,))(output)
-            ious = keras.layers.Lambda(lambda c: c[:, :, -1:], K.int_shape(output)[1:-1] + (1,))(output)
-        return self._create_predict_network(model.inputs, confs, locs, ious)
 
     def _create_predict_network(self, inputs, confs, locs, ious):
         """予測用ネットワークの作成"""

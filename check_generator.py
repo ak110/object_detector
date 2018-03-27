@@ -29,7 +29,7 @@ def _main():
         for X, y in zip(X_batch, y_batch):
             img = tk.image.unpreprocess_input_abs1(X)
             tk.ml.plot_objects(
-                img, save_dir / '{}.png'.format(i),
+                img, save_dir / f'{i}.png',
                 y.classes, None, y.bboxes, class_names)
 
 

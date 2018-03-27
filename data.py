@@ -5,7 +5,6 @@ import warnings
 import numpy as np
 import pandas as pd
 import PIL.Image
-import sklearn.externals.joblib as joblib
 
 import pytoolkit as tk
 
@@ -58,7 +57,7 @@ def load_data_csv(data_dir: pathlib.Path):
 
 
 def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
-    df = pd.read_csv(str(csv_dir / '{}.csv'.format(data_type)))
+    df = pd.read_csv(str(csv_dir / f'{data_type}.csv'))
     # クラス名の一覧
     # ファイル名の一覧
     X = np.unique(df['filename'].values)
@@ -74,7 +73,7 @@ def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
                                      df_target['right'].values / width, df_target['bottom'].values / height)]
         enables = [0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1 for x1, y1, x2, y2 in bboxes]
         if not all(enables):
-            warnings.warn('不正なデータ:\n{}'.format(df_target))
+            warnings.warn(f'不正なデータ:\n{df_target}')
         if not any(enables):
             continue
         y.append(tk.ml.ObjectsAnnotation(
@@ -86,4 +85,3 @@ def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
             bboxes=[t for enable, t in zip(enables, bboxes) if enable],
             difficults=None))
     return np.array(y)
-

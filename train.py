@@ -50,7 +50,7 @@ def _run(args):
 
     base_lr = 0.5 * args.batch_size * hvd.size() / 256 / 3  # 損失関数がconf + loc + iouなのでちょっと調整
     opt = tk.dl.optimizers.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
-    model.compile(opt, od.loss, od.metrics, device_dense='/cpu:0')
+    model.compile(opt, od.loss, od.metrics)
 
     callbacks = []
     if args.no_lr_decay:
