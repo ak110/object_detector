@@ -8,7 +8,7 @@ import sklearn.metrics
 
 import pytoolkit as tk
 
-_VAR_LOC = 0.2  # SSD風適当スケーリング
+_VAR_LOC = 0.2  # SSD風(?)適当スケーリング
 _VAR_SIZE = 0.2  # SSD風適当スケーリング
 
 
@@ -37,18 +37,19 @@ class ObjectDetector(object):
         bboxes = np.concatenate([y.bboxes for y in y_train])
         bboxes_sizes = bboxes[:, 2:] - bboxes[:, :2]
         bb_base_sizes = bboxes_sizes.min(axis=-1)  # 短辺のサイズのリスト
-        bb_base_areas = np.sqrt(bboxes_sizes.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
         assert (bb_base_sizes >= 0).all()  # 不正なデータは含まれない想定 (手抜き)
         assert (bb_base_sizes < 1).all()  # 不正なデータは含まれない想定 (手抜き)
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         tile_sizes = 1 / map_sizes
+        min_area_pattern = 0.5  # グリッドのサイズの半分を下限としてみる
+        max_area_pattern = 1 / tile_sizes.max()  # 一番荒いmapが画像全体になるくらいのスケールを上限としてみる
         bboxes_size_patterns = []
-        for ti, tile_size in enumerate(tile_sizes):
-            min_tile_size = 0 if tile_size == tile_sizes.min() else tile_size / 2  # 倍～半分くらいをカバーさせる
-            max_tile_size = 1 if tile_size == tile_sizes.max() else tile_sizes[ti + 1]
-            mask = np.logical_and(bb_base_areas >= min_tile_size, bb_base_areas < max_tile_size)
-            bboxes_size_patterns.append(bboxes_sizes[mask] / tile_size)
+        for tile_size in tile_sizes:
+            size_pattern = bboxes_sizes / tile_size
+            area_pattern = np.sqrt(size_pattern.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
+            mask = np.logical_and(min_area_pattern <= area_pattern, area_pattern <= max_area_pattern)
+            bboxes_size_patterns.append(size_pattern[mask])
         bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
         assert len(bboxes_size_patterns.shape) == 2
         assert bboxes_size_patterns.shape[1] == 2
@@ -99,7 +100,7 @@ class ObjectDetector(object):
         ct = np.mean([self.pb_locs[:, 2:], self.pb_locs[:, :2]], axis=0)
         assert np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all()
         # はみ出ているprior boxは使用しないようにする
-        self.pb_mask = np.logical_and(self.pb_grid >= 0, self.pb_grid <= 1 + (1 / self.image_size[0])).all(axis=-1)
+        self.pb_mask = np.logical_and(self.pb_locs >= -0.1, self.pb_locs <= +1.1).all(axis=-1)
 
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4), f'shape error: {self.pb_locs.shape}'
@@ -248,7 +249,16 @@ class ObjectDetector(object):
 
         # ログ出力
         logger = tk.log.get(__name__)
+        # ヒストグラム色々
+        rec_mean_abs_delta = [np.mean(np.abs(dl)) for dl in rec_delta_locs]
+        tk.math.print_histgram(unrec_widths, name='unrec_widths', print_fn=logger.info)
+        tk.math.print_histgram(unrec_heights, name='unrec_heights', print_fn=logger.info)
+        tk.math.print_histgram(unrec_ars, name='unrec_ars', print_fn=logger.info)
+        tk.math.print_histgram(rec_mean_abs_delta, name='rec_mean_abs_delta', print_fn=logger.info)
+        tk.math.print_histgram(assigned_count_list, name='assigned_count', print_fn=logger.info)
+        # classification_report
         logger.info(cr)
+        # prior box毎の集計など
         logger.info('assigned counts:')
         for i, c in enumerate(assigned_counts):
             logger.info('  prior boxes{m=%d, size=%.2f ar=%.2f} = %d (%.02f%%)',
@@ -272,13 +282,6 @@ class ObjectDetector(object):
         delta_locs = np.concatenate(rec_delta_locs)
         logger.info('delta loc: mean=%.2f std=%.2f min=%.2f max=%.2f',
                     delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
-        # ヒストグラム色々
-        rec_mean_abs_delta = [np.mean(np.abs(dl)) for dl in rec_delta_locs]
-        tk.math.print_histgram(unrec_widths, name='unrec_widths', print_fn=logger.info)
-        tk.math.print_histgram(unrec_heights, name='unrec_heights', print_fn=logger.info)
-        tk.math.print_histgram(unrec_ars, name='unrec_ars', print_fn=logger.info)
-        tk.math.print_histgram(rec_mean_abs_delta, name='rec_mean_abs_delta', print_fn=logger.info)
-        tk.math.print_histgram(assigned_count_list, name='assigned_count', print_fn=logger.info)
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
         """学習用の`y_true`の作成。
@@ -309,6 +312,7 @@ class ObjectDetector(object):
         戻り値は、prior boxのindexとbboxesのindexとiouのタプルのリスト。
         """
         assert len(bboxes) >= 1
+        bb_centers = np.mean([bboxes[:, 2:], bboxes[:, :2]], axis=0)
 
         assigned_gt = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
         assigned_iou = np.zeros((len(self.pb_locs),), dtype=float)
@@ -317,14 +321,13 @@ class ObjectDetector(object):
         # 面積の降順に並べ替え (おまじない: 出来るだけ小さいのが埋もれないように)
         sorted_indices = np.prod(bboxes[:, 2:] - bboxes[:, :2], axis=-1).argsort()[::-1]
 
-        for gt_ix, bbox in zip(sorted_indices, bboxes[sorted_indices]):
+        for gt_ix, bbox, bb_center in zip(sorted_indices, bboxes[sorted_indices], bb_centers[sorted_indices]):
             # bboxの重心が含まれるprior boxにのみ割り当てる。
-            bb_center = np.mean([bbox[2:], bbox[:2]], axis=0)
-            pb_center_mask = np.logical_and(self.pb_locs[:, :2] <= bb_center, bb_center < self.pb_locs[:, 2:]).all(axis=-1)
+            pb_center_mask = np.logical_and(self.pb_grid[:, :2] <= bb_center, bb_center < self.pb_grid[:, 2:]).all(axis=-1)
             pb_center_mask = np.logical_and(pb_center_mask, self.pb_mask)
             assert pb_center_mask.any(), f'Encode error: {bb_center}'
             # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
-            iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
+            iou = tk.ml.compute_size_based_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
             iou_mask = iou >= 0.5
             if iou_mask.any():
                 for pb_ix, pb_iou in zip(np.where(pb_center_mask)[0][iou_mask], iou[iou_mask]):
