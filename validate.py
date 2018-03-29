@@ -34,7 +34,7 @@ def _run(args):
 
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    model, _ = od.create_network(load_weights=False, for_predict=True)
+    model = od.create_network(load_weights=False, for_predict=True)
     model.load_weights(str(RESULT_DIR / 'model.h5'), by_name=True)
 
     # マルチGPU対応

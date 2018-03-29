@@ -532,9 +532,8 @@ class ObjectDetector(object):
         builder = tk.dl.layers.Builder()
 
         x = inputs = keras.layers.Input(image_size + (3,))
-        x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
+        x, _ = self._create_basenet(builder, x, load_weights=True)
         assert builder.shape(x)[1] == 3
-        assert len(lr_multipliers) == 0
         x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
 
         model = keras.models.Model(inputs=inputs, outputs=x)
@@ -553,7 +552,7 @@ class ObjectDetector(object):
 
         # downsampling (ベースネットワーク)
         x = inputs = keras.layers.Input(self.image_size + (3,))
-        x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
+        x, ref = self._create_basenet(builder, x, load_weights)
         map_size = builder.shape(x)[1]
 
         # center
@@ -586,7 +585,7 @@ class ObjectDetector(object):
             map_size *= 2
 
         # prediction module
-        confs, locs, ious = self._create_pm(builder, ref, lr_multipliers)
+        confs, locs, ious = self._create_pm(builder, ref)
 
         if for_predict:
             model = self._create_predict_network(inputs, confs, locs, ious)
@@ -599,7 +598,7 @@ class ObjectDetector(object):
         logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
         logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
 
-        return model, lr_multipliers
+        return model
 
     @tk.log.trace()
     def _create_basenet(self, builder, x, load_weights):
@@ -614,7 +613,6 @@ class ObjectDetector(object):
                     layer.trainable = False
 
         ref_list = []
-        lr_multipliers = {}
         if self.base_network == 'custom':
             x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
             x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
@@ -663,10 +661,10 @@ class ObjectDetector(object):
                 break
 
         ref = {f'down{builder.shape(x)[1]}': x for x in ref_list}
-        return x, ref, lr_multipliers
+        return x, ref
 
     @tk.log.trace()
-    def _create_pm(self, builder, ref, lr_multipliers):
+    def _create_pm(self, builder, ref):
         """Prediction module."""
         import keras
 
@@ -697,10 +695,6 @@ class ObjectDetector(object):
                 activation='sigmoid',
                 use_bn=False,
                 name=f'pm-{pat_ix}_iou')
-
-        for layer in shared_layers.values():
-            w = layer.trainable_weights
-            lr_multipliers.update(zip(w, [1 / len(self.map_sizes)] * len(w)))  # 共有部分の学習率調整
 
         confs, locs, ious = [], [], []
         for map_size in self.map_sizes:

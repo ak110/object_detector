@@ -33,7 +33,7 @@ def _report_net(args):
 
     import keras
     with tk.dl.session():
-        model, _ = od.create_network()
+        model = od.create_network()
 
         with tk.log.trace_scope('network.txt'):
             with (args.result_dir / 'network.txt').open('w') as f:
@@ -50,13 +50,11 @@ def _report_net(args):
 
 
 def _report_history(args):
-    import matplotlib.pyplot as plt
-
     with tk.log.trace_scope('history.loss.png'):
         df = pd.read_csv(str(args.result_dir / 'history.tsv'), sep='\t')
-        df[['loss', 'val_loss']].plot()
-        plt.savefig(str(args.result_dir / 'history.loss.png'))
-        plt.close()
+        ax = df[['loss', 'val_loss']].plot()
+        tk.draw.save(ax, args.result_dir / 'history.loss.png')
+        tk.draw.close(ax)
 
 
 if __name__ == '__main__':

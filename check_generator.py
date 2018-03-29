@@ -9,9 +9,6 @@ import pytoolkit as tk
 
 
 def _main():
-    import matplotlib
-    matplotlib.use('Agg')
-
     base_dir = pathlib.Path(__file__).resolve().parent
     data_dir = base_dir / 'data'
     save_dir = base_dir / '___generator_check'

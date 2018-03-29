@@ -38,7 +38,7 @@ def _run(args):
 
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    model, lr_multipliers = od.create_network()
+    model = od.create_network()
     model = tk.dl.models.Model(model, od.create_generator(), use_horovod=True)
 
     # 学習済み重みの読み込み
@@ -48,9 +48,8 @@ def _run(args):
             logger.info('warm start: %s', warm_path.name)
             break
 
-    base_lr = 0.5 * args.batch_size * hvd.size() / 256 / 3  # 損失関数がconf + loc + iouなのでちょっと調整
-    opt = tk.dl.optimizers.nsgd()(lr=base_lr, lr_multipliers=lr_multipliers)
-    model.compile(opt, od.loss, od.metrics)
+    lr = 0.5 * args.batch_size / 256 / 3  # 損失関数がconf + loc + iouなのでちょっと調整
+    model.compile(lr=lr, loss=od.loss, metrics=od.metrics)
 
     callbacks = []
     if args.no_lr_decay:
