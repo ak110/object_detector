@@ -15,7 +15,6 @@ RESULT_DIR = BASE_DIR / 'results'
 
 
 def _main():
-    tk.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)

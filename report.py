@@ -13,7 +13,6 @@ DATA_DIR = BASE_DIR / 'data'
 
 
 def _main():
-    tk.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', help='動作種別', nargs='?', default='all', choices=['net', 'history', 'all'])
     parser.add_argument('--result-dir', help='resultsディレクトリのパス。', type=pathlib.Path, default=BASE_DIR / 'results')

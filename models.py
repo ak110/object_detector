@@ -21,11 +21,7 @@ class ObjectDetector(object):
     @classmethod
     @tk.log.trace()
     def create(cls, base_network, input_size, map_sizes, nb_classes, y_train, pb_size_pattern_count=8):
-        """訓練データからパラメータを適当に決めてインスタンスを作成する。
-
-        gridに配置したときのIOUを直接最適化するのは難しそうなので、
-        とりあえず大雑把にKMeansでクラスタ化したりなど。
-        """
+        """訓練データからパラメータを適当に決めてインスタンスを作成する。"""
         logger = tk.log.get(__name__)
         logger.info('ハイパーパラメータ算出: base-network=%s input-size=%s map-sizes=%s classes=%d',
                     base_network, input_size, map_sizes, nb_classes)
@@ -42,13 +38,13 @@ class ObjectDetector(object):
 
         # bboxのサイズごとにどこかのfeature mapに割り当てたことにして相対サイズをリストアップ
         tile_sizes = 1 / map_sizes
-        min_area_pattern = 0.5  # グリッドのサイズの半分を下限としてみる
+        min_area_pattern = 0.5  # タイルの半分を下限としてみる
         max_area_pattern = 1 / tile_sizes.max()  # 一番荒いmapが画像全体になるくらいのスケールを上限としてみる
         bboxes_size_patterns = []
         for tile_size in tile_sizes:
             size_pattern = bboxes_sizes / tile_size
             area_pattern = np.sqrt(size_pattern.prod(axis=-1))  # 縦幅・横幅の相乗平均のリスト
-            mask = np.logical_and(min_area_pattern <= area_pattern, area_pattern <= max_area_pattern)
+            mask = tk.math.between(area_pattern, min_area_pattern, max_area_pattern)
             bboxes_size_patterns.append(size_pattern[mask])
         bboxes_size_patterns = np.concatenate(bboxes_size_patterns)
         assert len(bboxes_size_patterns.shape) == 2
@@ -98,9 +94,9 @@ class ObjectDetector(object):
 
         # prior boxの重心はpb_gridの中心であるはず
         ct = np.mean([self.pb_locs[:, 2:], self.pb_locs[:, :2]], axis=0)
-        assert np.logical_and(self.pb_grid[:, :2] <= ct, ct < self.pb_grid[:, 2:]).all()
+        assert tk.math.in_range(ct, self.pb_grid[:, :2], self.pb_grid[:, 2:]).all()
         # はみ出ているprior boxは使用しないようにする
-        self.pb_mask = np.logical_and(self.pb_locs >= -0.1, self.pb_locs <= +1.1).all(axis=-1)
+        self.pb_mask = tk.math.between(self.pb_locs, -0.1, +1.1).all(axis=-1)
 
         nb_pboxes = len(self.pb_locs)
         assert self.pb_locs.shape == (nb_pboxes, 4), f'shape error: {self.pb_locs.shape}'
@@ -162,33 +158,12 @@ class ObjectDetector(object):
 
     def encode_locs(self, bboxes, bb_ix, pb_ix):
         """座標を学習用に変換。"""
-        if True:
-            # x1, y1, x2, y2の回帰
-            return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / _VAR_LOC
-        else:
-            # SSD風のx, y, w, hの回帰
-            import keras.backend as K
-            bb_center_xy = np.mean([bboxes[bb_ix, :2], bboxes[bb_ix, 2:]], axis=0)
-            bb_wh = bboxes[bb_ix, 2:] - bboxes[bb_ix, :2]
-            encoded_xy = (bb_center_xy - self.pb_centers[pb_ix, :]) / self.pb_sizes[pb_ix, :] / _VAR_LOC
-            encoded_wh = np.log(np.maximum(bb_wh / self.pb_sizes[pb_ix, :], K.epsilon())) / _VAR_SIZE
-            return np.concatenate([encoded_xy, encoded_wh], axis=-1)
+        return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / _VAR_LOC
 
     def decode_locs(self, pred, xp):
         """encode_locsの逆変換。xpはnumpy or keras.backend。"""
-        if True:
-            # x1, y1, x2, y2の回帰
-            decoded = pred * (_VAR_LOC * np.tile(self.pb_sizes, 2)) + self.pb_locs
-            return xp.clip(decoded, 0, 1)
-        else:
-            # SSD風のx, y, w, hの回帰
-            decoded_xy = pred[:, :, :2] * _VAR_LOC * self.pb_sizes + self.pb_centers
-            decoded_half_wh = xp.exp(pred[:, :, 2:] * _VAR_SIZE) * self.pb_sizes / 2
-            decoded = xp.concatenate([
-                decoded_xy - decoded_half_wh,
-                decoded_xy + decoded_half_wh,
-            ], axis=-1)
-            return xp.clip(decoded, 0, 1)
+        decoded = pred * (_VAR_LOC * np.tile(self.pb_sizes, 2)) + self.pb_locs
+        return xp.clip(decoded, 0, 1)
 
     def check_prior_boxes(self, y_test: [tk.ml.ObjectsAnnotation], class_names):
         """データに対してprior boxがどれくらいマッチしてるか調べる。"""
@@ -216,7 +191,7 @@ class ObjectDetector(object):
                 rec_delta_locs.append(self.encode_locs(y.bboxes, assigned_gt, assigned_pb))
             # オブジェクトごとの集計
             for gt_ix, (class_id, difficult) in enumerate(zip(y.classes, y.difficults)):
-                assert 1 <= class_id < self.nb_classes
+                assert 0 <= class_id < self.nb_classes
                 if difficult:
                     continue
                 gt_mask = assigned_gt_list == gt_ix
@@ -243,8 +218,6 @@ class ObjectDetector(object):
                     unrec_widths.append(wh[1])
                     unrec_heights.append(wh[0])
                     unrec_ars.append(wh[0] / wh[1])
-        y_true.append(0)  # 警告よけにbgも1個入れておく
-        y_pred.append(0)  # 警告よけにbgも1個入れておく
         cr = sklearn.metrics.classification_report(y_true, y_pred, target_names=class_names)
 
         # ログ出力
@@ -284,27 +257,17 @@ class ObjectDetector(object):
                     delta_locs.mean(), delta_locs.std(), delta_locs.min(), delta_locs.max())
 
     def encode_truth(self, y_gt: [tk.ml.ObjectsAnnotation]):
-        """学習用の`y_true`の作成。
-
-        IOUが0.5以上のものを全部割り当てる＆割り当らなかったらIOUが一番大きいものに割り当てる。
-        1つのprior boxに複数割り当たってしまっていたらIOUが一番大きいものを採用。
-        """
-        confs = np.zeros((len(y_gt), len(self.pb_locs), self.nb_classes), dtype=np.float32)
-        confs[:, :, 0] = 1  # bg
-        locs = np.zeros((len(y_gt), len(self.pb_locs), 4), dtype=np.float32)
-        # 画像ごとのループ
+        """学習用の`y_true`の作成。"""
+        # objs, clfs, locs
+        y_true = np.zeros((len(y_gt), len(self.pb_locs), 1 + self.nb_classes + 4), dtype=np.float32)
         for i, y in enumerate(y_gt):
+            assert tk.math.in_range(y.classes, 0, self.nb_classes).all()
             assigned_pb_list, assigned_gt_list, _ = self._assign_boxes(y.bboxes)
             for pb_ix, gt_ix in zip(assigned_pb_list, assigned_gt_list):
-                class_id = y.classes[gt_ix]
-                assert 0 < class_id < self.nb_classes
-                confs[i, pb_ix, 0] = 0  # bg
-                confs[i, pb_ix, class_id] = 1
-                locs[i, pb_ix, :] = self.encode_locs(y.bboxes, gt_ix, pb_ix)
-
-        # いったんくっつける (損失関数の中で分割して使う)
-        dummy = np.zeros((len(y_gt), len(self.pb_locs), 1), dtype=np.float32)  # ネットワークの出力と形式を合わせる
-        return np.concatenate([confs, locs, dummy], axis=-1)
+                y_true[i, pb_ix, 0] = 1  # 0:bg 1:obj
+                y_true[i, pb_ix, 1 + y.classes[gt_ix]] = 1
+                y_true[i, pb_ix, -4:] = self.encode_locs(y.bboxes, gt_ix, pb_ix)
+        return y_true
 
     def _assign_boxes(self, bboxes):
         """各bounding boxをprior boxに割り当てる。
@@ -314,40 +277,57 @@ class ObjectDetector(object):
         assert len(bboxes) >= 1
         bb_centers = np.mean([bboxes[:, 2:], bboxes[:, :2]], axis=0)
 
-        assigned_gt = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
-        assigned_iou = np.zeros((len(self.pb_locs),), dtype=float)
-        assignable = np.ones((len(self.pb_locs),), dtype=bool)
+        pb_assigned_gt = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
+        pb_assigned_iou = np.zeros((len(self.pb_locs),), dtype=float)
+        pb_assignable = np.ones((len(self.pb_locs),), dtype=bool)
 
         # 面積の降順に並べ替え (おまじない: 出来るだけ小さいのが埋もれないように)
         sorted_indices = np.prod(bboxes[:, 2:] - bboxes[:, :2], axis=-1).argsort()[::-1]
-
+        # とりあえずSSD風にIoU >= 0.5に割り当て
         for gt_ix, bbox, bb_center in zip(sorted_indices, bboxes[sorted_indices], bb_centers[sorted_indices]):
-            # bboxの重心が含まれるprior boxにのみ割り当てる。
-            pb_center_mask = np.logical_and(self.pb_grid[:, :2] <= bb_center, bb_center < self.pb_grid[:, 2:]).all(axis=-1)
-            pb_center_mask = np.logical_and(pb_center_mask, self.pb_mask)
-            assert pb_center_mask.any(), f'Encode error: {bb_center}'
+            # bboxの重心が含まれるprior boxにのみ割り当てる
+            pb_mask = tk.math.in_range(bb_center, self.pb_locs[:, :2], self.pb_locs[:, 2:]).all(axis=-1)
+            pb_mask = np.logical_and(pb_mask, self.pb_mask)
+            assert pb_mask.any(), f'Encode error: {bb_center}'
             # IoUが0.5以上のものに割り当てる。1つも無ければ最大のものに。
-            iou = tk.ml.compute_size_based_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_center_mask, :])[0]
+            iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_mask, :])[0]
             iou_mask = iou >= 0.5
             if iou_mask.any():
-                for pb_ix, pb_iou in zip(np.where(pb_center_mask)[0][iou_mask], iou[iou_mask]):
+                for pb_ix, pb_iou in zip(np.where(pb_mask)[0][iou_mask], iou[iou_mask]):
                     # よりIoUが大きいものを優先して割り当て
-                    if assignable[pb_ix] and assigned_iou[pb_ix] < pb_iou:
-                        assigned_gt[pb_ix] = gt_ix
-                        assigned_iou[pb_ix] = pb_iou
+                    if pb_assignable[pb_ix] and pb_assigned_iou[pb_ix] < pb_iou:
+                        pb_assigned_gt[pb_ix] = gt_ix
+                        pb_assigned_iou[pb_ix] = pb_iou
             else:
                 iou_mask = iou.argmax()
-                pb_mask = np.where(pb_center_mask)[0][iou_mask]
-                assigned_gt[pb_mask] = gt_ix
-                assigned_iou[pb_mask] = iou[iou_mask]
-                assignable[pb_mask] = False  # 上書き禁止！
+                pb_mask = np.where(pb_mask)[0][iou_mask]
+                pb_assigned_gt[pb_mask] = gt_ix
+                pb_assigned_iou[pb_mask] = iou[iou_mask]
+                pb_assignable[pb_mask] = False  # 上書き禁止！
 
-        assert not np.logical_and(assigned_gt >= 0, np.logical_not(self.pb_mask)).any(), '無効なprior boxへの割り当て'
+        # 中心が一致している前提で最も一致するところに強制割り当て
+        pb_assignable = np.ones((len(self.pb_locs),), dtype=bool)
+        for gt_ix, (bbox, bb_center) in enumerate(zip(bboxes, bb_centers)):
+            # bboxの重心が含まれるグリッドのみ探す
+            pb_mask = tk.math.in_range(bb_center, self.pb_grid[:, :2], self.pb_grid[:, 2:]).all(axis=-1)
+            pb_mask = np.logical_and(pb_mask, self.pb_mask)
+            assert pb_mask.any(), f'Encode error: {bb_center}'
+            pb_mask = np.logical_and(pb_mask, pb_assignable)  # 割り当て済みは除外
+            if not pb_mask.any():
+                continue  # 割り当て失敗
+            # 形が最も合うもの1つにassignする
+            sb_iou = tk.ml.compute_size_based_iou(np.expand_dims(bbox, axis=0), self.pb_locs[pb_mask])[0]
+            sb_iou_ix = sb_iou.argmax()
+            pb_ix = np.where(pb_mask)[0][sb_iou_ix]
+            iou = tk.ml.compute_iou(np.expand_dims(bbox, axis=0), np.expand_dims(self.pb_locs[pb_ix], axis=0))[0, 0]
+            pb_assigned_gt[pb_ix] = gt_ix
+            pb_assigned_iou[pb_ix] = iou  # 意味の違うIoUを混ぜちゃうのも何なので一応再計算したものを設定
+            pb_assignable[pb_ix] = False
 
-        pb_indices = np.where(assigned_gt >= 0)[0]
+        pb_indices = np.where(pb_assigned_gt >= 0)[0]
         assert len(pb_indices) >= 1  # 1個以上は必ず割り当てないと損失関数などが面倒になる
 
-        return pb_indices, assigned_gt[pb_indices], assigned_iou[pb_indices]
+        return pb_indices, pb_assigned_gt[pb_indices], pb_assigned_iou[pb_indices]
 
     def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, parallel=None):
         """予測結果のうちスコアが高いものを取り出す。
@@ -359,26 +339,22 @@ class ObjectDetector(object):
 
         BOX数は、入力はprior box数。出力は検出数(可変)
         """
-        assert classes_list.shape[1:] == (len(self.pb_locs),)
-        assert confs_list.shape[1:] == (len(self.pb_locs),)
-        assert locs_list.shape[1:] == (len(self.pb_locs), 4)
+        num_images = len(classes_list)
+        assert classes_list.shape == (num_images, len(self.pb_locs),)
+        assert confs_list.shape == (num_images, len(self.pb_locs),)
+        assert locs_list.shape == (num_images, len(self.pb_locs), 4)
         # 画像毎にループ
         if parallel:
             jobs = [joblib.delayed(self._select, check_pickle=False)(pc, pf, pl, top_k, nms_threshold)
                     for pc, pf, pl in zip(classes_list, confs_list, locs_list)]
             result_classes, result_confs, result_locs = zip(*parallel(jobs))
         else:
-            result_classes = []
-            result_confs = []
-            result_locs = []
-            for pc, pf, pl in zip(classes_list, confs_list, locs_list):
-                img_classes, img_confs, img_locs = self._select(pc, pf, pl, top_k, nms_threshold)
-                result_classes.append(img_classes)
-                result_confs.append(img_confs)
-                result_locs.append(img_locs)
-        assert len(result_classes) == len(classes_list)
-        assert len(result_confs) == len(classes_list)
-        assert len(result_locs) == len(classes_list)
+            results = [self._select(pc, pf, pl, top_k, nms_threshold)
+                       for pc, pf, pl in zip(classes_list, confs_list, locs_list)]
+            result_classes, result_confs, result_locs = zip(*results)
+        assert len(result_classes) == num_images
+        assert len(result_confs) == num_images
+        assert len(result_locs) == num_images
         return result_classes, result_confs, result_locs
 
     def _select(self, pred_classes, pred_confs, pred_locs, top_k, nms_threshold):
@@ -391,7 +367,7 @@ class ObjectDetector(object):
         img_classes = []
         img_confs = []
         img_locs = []
-        for target_class in range(1, self.nb_classes):
+        for target_class in range(self.nb_classes):
             targets = pred_classes == target_class
             if not targets.any():
                 continue
@@ -417,107 +393,66 @@ class ObjectDetector(object):
     def loss(self, y_true, y_pred):
         """損失関数。"""
         import keras.backend as K
-        import tensorflow as tf
-        gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
-        pred_confs, pred_locs, pred_iou = y_pred[:, :, :-5], y_pred[:, :, -5:-1], y_pred[:, :, -1]
-        obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-        obj_count = K.sum(obj_mask, axis=-1)  # 各batch毎のobj数。
-        # obj_countが1以上であることの確認
-        with tf.control_dependencies([tf.assert_positive(obj_count)]):
-            obj_count = tf.identity(obj_count)
-        loss_conf = self._loss_conf(gt_confs, pred_confs, obj_count)
-        loss_loc = self._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
-        loss_iou = self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
-        return loss_conf + loss_loc + loss_iou
+        loss_obj = self.loss_obj(y_true, y_pred)
+        loss_clf = self.loss_clf(y_true, y_pred)
+        loss_loc = self.loss_loc(y_true, y_pred)
+        loss = loss_obj + loss_clf + loss_loc
+        assert len(K.int_shape(loss)) == 1  # (None,)
+        return loss
 
     @property
     def metrics(self):
         """各種metricをまとめて返す。"""
         import keras.backend as K
 
-        def loss_conf(y_true, y_pred):
-            """クラス分類の損失項。(metrics用)"""
-            gt_confs = y_true[:, :, :-5]
-            pred_confs = y_pred[:, :, :-5]
-            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-            obj_count = K.sum(obj_mask, axis=-1)
-            return self._loss_conf(gt_confs, pred_confs, obj_count)
-
-        def loss_loc(y_true, y_pred):
-            """位置の損失項。(metrics用)"""
-            gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
-            pred_locs = y_pred[:, :, -5:-1]
-            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-            obj_count = K.sum(obj_mask, axis=-1)
-            return self._loss_loc(gt_locs, pred_locs, obj_mask, obj_count)
-
-        def loss_iou(y_true, y_pred):
-            """IOUの損失項。(metrics用)"""
-            gt_confs, gt_locs = y_true[:, :, :-5], y_true[:, :, -5:-1]
-            pred_locs, pred_iou = y_pred[:, :, -5:-1], y_pred[:, :, -1]
-            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-            obj_count = K.sum(obj_mask, axis=-1)
-            return self._loss_iou(gt_locs, pred_locs, pred_iou, obj_mask, obj_count)
-
         def acc_bg(y_true, y_pred):
             """背景の再現率。"""
-            gt_confs = y_true[:, :, :-5]
-            pred_confs = y_pred[:, :, :-5]
-            bg_mask = K.cast(K.greater_equal(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景
-            bg_count = K.sum(bg_mask, axis=-1)
-            acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-            return K.sum(acc * bg_mask, axis=-1) / bg_count
+            gt_obj, pred_obj = y_true[:, :, 0], y_pred[:, :, 0]
+            gt_bg = 1 - gt_obj   # 背景
+            acc = K.cast(K.equal(K.greater(gt_obj, 0.5), K.greater(pred_obj, 0.5)), K.floatx())
+            return K.sum(acc * gt_bg, axis=-1) / K.sum(gt_bg, axis=-1)
 
         def acc_obj(y_true, y_pred):
             """物体の再現率。"""
-            gt_confs = y_true[:, :, :-5]
-            pred_confs = y_pred[:, :, :-5]
-            obj_mask = K.cast(K.less(gt_confs[:, :, 0], 0.5), K.floatx())   # 背景以外
-            obj_count = K.sum(obj_mask, axis=-1)
-            acc = K.cast(K.equal(K.argmax(gt_confs, axis=-1), K.argmax(pred_confs, axis=-1)), K.floatx())
-            return K.sum(acc * obj_mask, axis=-1) / obj_count
+            gt_obj, pred_obj = y_true[:, :, 0], y_pred[:, :, 0]
+            acc = K.cast(K.equal(K.greater(gt_obj, 0.5), K.greater(pred_obj, 0.5)), K.floatx())
+            return K.sum(acc * gt_obj, axis=-1) / K.sum(gt_obj, axis=-1)
 
-        return [loss_conf, loss_loc, loss_iou, acc_bg, acc_obj]
+        return [self.loss_obj, self.loss_clf, self.loss_loc, acc_bg, acc_obj]
 
-    def _loss_conf(self, gt_confs, pred_confs, obj_count):
-        """分類のloss。"""
+    def loss_obj(self, y_true, y_pred):
+        """ObjectnessのFocal loss。"""
         import keras.backend as K
-        if True:
-            loss = tk.dl.losses.categorical_focal_loss(gt_confs, pred_confs)
-            loss *= np.expand_dims(self.pb_mask, axis=0)
-            loss = K.sum(loss, axis=-1) / obj_count  # normalized by the number of anchors assigned to a ground-truth box
-        else:
-            loss = tk.dl.losses.categorical_crossentropy(gt_confs, pred_confs, alpha=0.75)
-            loss *= np.expand_dims(self.pb_mask, axis=0)
-            loss = K.mean(loss, axis=-1)
+        import tensorflow as tf
+        gt_obj, pred_obj = y_true[:, :, 0], y_pred[:, :, 0]
+        gt_obj_count = K.sum(gt_obj, axis=-1)  # 各batch毎のobj数。
+        with tf.control_dependencies([tf.assert_positive(gt_obj_count)]):  # obj_countが1以上であることの確認
+            gt_obj_count = tf.identity(gt_obj_count)
+        pb_mask = np.expand_dims(self.pb_mask, axis=0)
+        loss = tk.dl.losses.binary_focal_loss(gt_obj, pred_obj)
+        loss = K.sum(pb_mask * loss, axis=-1) / gt_obj_count  # normalized by the number of anchors assigned to a ground-truth box
         return loss
 
     @staticmethod
-    def _loss_loc(gt_locs, pred_locs, obj_mask, obj_count):
-        """位置のloss。"""
+    def loss_clf(y_true, y_pred):
+        """クラス分類のloss。多クラスだけどbinary_crossentropy。(cf. YOLOv3)"""
         import keras.backend as K
-        loss = tk.dl.losses.l1_smooth_loss(gt_locs, pred_locs)
-        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
+        gt_obj = y_true[:, :, 0]
+        gt_classes, pred_classes = y_true[:, :, 1:-4], y_pred[:, :, 1:-4]
+        loss = K.binary_crossentropy(gt_classes, pred_classes)
+        loss = K.mean(loss, axis=-1)  # mean (classes)
+        loss = K.sum(gt_obj * loss, axis=-1) / K.sum(gt_obj, axis=-1)  # mean (box)
         return loss
 
-    def _loss_iou(self, gt_locs, pred_locs, pred_iou, obj_mask, obj_count):
-        """IOUのloss。
-
-        gt_locsとpred_locsからIOUを算出し、それとpred_iouのbinary crossentropyを返す。
-        """
+    @staticmethod
+    def loss_loc(y_true, y_pred):
+        """位置のloss。"""
         import keras.backend as K
-        bboxes_a = self.decode_locs(gt_locs, K)
-        bboxes_b = self.decode_locs(pred_locs, K)
-        lt = K.maximum(bboxes_a[:, :, :2], bboxes_b[:, :, :2])
-        rb = K.minimum(bboxes_a[:, :, 2:], bboxes_b[:, :, 2:])
-        area_inter = K.prod(rb - lt, axis=-1) * K.cast(K.all(K.less(lt, rb), axis=-1), K.floatx())
-        area_a = K.maximum(K.prod(bboxes_a[:, :, 2:] - bboxes_a[:, :, :2], axis=-1), 0)
-        area_b = K.maximum(K.prod(bboxes_b[:, :, 2:] - bboxes_b[:, :, :2], axis=-1), 0)
-        area_union = area_a + area_b - area_inter
-        iou = area_inter / area_union
-        # IOUのcrossentropy
-        loss = K.binary_crossentropy(iou, pred_iou)
-        loss = K.sum(loss * obj_mask, axis=-1) / obj_count  # mean
+        gt_obj = y_true[:, :, 0]
+        gt_locs, pred_locs = y_true[:, :, -4:], y_pred[:, :, -4:]
+        loss = tk.dl.losses.l1_smooth_loss(gt_locs, pred_locs)
+        loss = K.sum(loss, axis=-1)  # loss(x1) + loss(y1) + loss(x2) + loss(y2)
+        loss = K.sum(gt_obj * loss, axis=-1) / K.sum(gt_obj, axis=-1)  # mean (box)
         return loss
 
     def get_preprocess_input(self):
@@ -538,13 +473,11 @@ class ObjectDetector(object):
         x, _ = self._create_basenet(builder, x, load_weights=True)
         assert builder.shape(x)[1] == 3
         x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
-
         model = keras.models.Model(inputs=inputs, outputs=x)
 
         logger = tk.log.get(__name__)
         logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
         logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
-
         return model
 
     @tk.log.trace()
@@ -566,21 +499,22 @@ class ObjectDetector(object):
         ref[f'out{1}'] = x
 
         # upsampling
+        up_index = 0
         while True:
+            up_index += 1
             in_map_size = builder.shape(x)[1]
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
             x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
                                  kernel_initializer='zeros',
                                  use_bias=False, use_bn=False, use_act=False,
-                                 name=f'up{map_size}_us')(x)
+                                 name=f'up{up_index}_us')(x)
             t = ref[f'down{map_size}']
-            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{map_size}_lt')(t)
-            x = keras.layers.add([x, t], name=f'up{map_size}_mix')
-            x = builder.bn(name=f'up{map_size}_mix_bn')(x)
-            x = builder.act(name=f'up{map_size}_mix_act')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{map_size}_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{map_size}_conv2')(x)
+            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
+            x = keras.layers.add([x, t], name=f'up{up_index}_mix')
+            x = builder.bn_act(name=f'up{up_index}_mix')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
             ref[f'out{map_size}'] = x
 
             if self.map_sizes[0] <= map_size:
@@ -588,33 +522,24 @@ class ObjectDetector(object):
             map_size *= 2
 
         # prediction module
-        confs, locs, ious = self._create_pm(builder, ref)
+        objs, clfs, locs = self._create_pm(builder, ref)
 
         if for_predict:
-            model = self._create_predict_network(inputs, confs, locs, ious)
+            model = self._create_predict_network(inputs, objs, clfs, locs)
         else:
             # いったんくっつける (損失関数の中で分割して使う)
-            outputs = keras.layers.concatenate([confs, locs, ious], axis=-1, name='outputs')
+            outputs = keras.layers.concatenate([objs, clfs, locs], axis=-1, name='outputs')
             model = keras.models.Model(inputs=inputs, outputs=outputs)
 
         logger = tk.log.get(__name__)
         logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
         logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
-
         return model
 
     @tk.log.trace()
     def _create_basenet(self, builder, x, load_weights):
         """ベースネットワークの作成。"""
         import keras
-
-        def _freeze(model, freeze_end_layer):
-            for layer in model.layers:
-                if layer.name == freeze_end_layer:
-                    break
-                if not isinstance(layer, keras.layers.BatchNormalization):
-                    layer.trainable = False
-
         ref_list = []
         if self.base_network == 'custom':
             x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
@@ -630,18 +555,18 @@ class ObjectDetector(object):
             ref_list.append(x)
         elif self.base_network == 'vgg16':
             basenet = keras.applications.VGG16(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            _freeze(basenet, 'block5_conv1')
+            tk.dl.models.freeze_to_name(basenet, 'block5_conv1', skip_bn=True)
             ref_list.append(basenet.get_layer(name='block4_pool').input)
             ref_list.append(basenet.get_layer(name='block5_pool').input)
         elif self.base_network == 'resnet50':
             basenet = keras.applications.ResNet50(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            _freeze(basenet, 'res4f_branch2a')
+            tk.dl.models.freeze_to_name(basenet, 'res4f_branch2a', skip_bn=True)
             ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
             ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
             ref_list.append(basenet.get_layer(name='avg_pool').input)
         elif self.base_network == 'xception':
             basenet = keras.applications.Xception(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            _freeze(basenet, 'block10_sepconv1_act')
+            tk.dl.models.freeze_to_name(basenet, 'block10_sepconv1_act', skip_bn=True)
             ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
             ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
             ref_list.append(basenet.get_layer(name='block14_sepconv2_act').output)
@@ -654,10 +579,12 @@ class ObjectDetector(object):
         assert builder.shape(x)[-1] == 256
 
         # downsampling
+        down_index = 0
         while True:
+            down_index += 1
             map_size = builder.shape(x)[1] // 2
-            x = builder.conv2d(256, (2, 2), strides=(2, 2), name=f'down{map_size}_ds')(x)
-            x = builder.conv2d(256, (3, 3), name=f'down{map_size}_conv')(x)
+            x = builder.conv2d(256, (2, 2), strides=(2, 2), name=f'down{down_index}_ds')(x)
+            x = builder.conv2d(256, (3, 3), name=f'down{down_index}_conv')(x)
             assert builder.shape(x)[1] == map_size
             ref_list.append(x)
             if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
@@ -671,81 +598,76 @@ class ObjectDetector(object):
         """Prediction module."""
         import keras
 
-        old_gn = builder.use_gn
-        builder.use_gn = True  # TODO: いまいち…
+        old_gn, builder.use_gn = builder.use_gn, True
 
-        shared_layers = {}
-        for pat_ix in range(len(self.pb_size_patterns)):
-            shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
-            shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
-            shared_layers[f'pm-{pat_ix}_conf'] = builder.conv2d(
-                self.nb_classes, (1, 1),
-                kernel_initializer='zeros',
-                bias_initializer=tk.dl.losses.od_bias_initializer(self.nb_classes),
-                bias_regularizer=None,
-                activation='softmax',
-                use_bn=False,
-                name=f'pm-{pat_ix}_conf')
-            shared_layers[f'pm-{pat_ix}_loc'] = builder.conv2d(
-                4, (1, 1),
-                kernel_initializer='zeros',
-                use_bn=False,
-                use_act=False,
-                name=f'pm-{pat_ix}_loc')
-            shared_layers[f'pm-{pat_ix}_iou'] = builder.conv2d(
-                1, (1, 1),
-                kernel_initializer='zeros',
-                activation='sigmoid',
-                use_bn=False,
-                name=f'pm-{pat_ix}_iou')
-
-        confs, locs, ious = [], [], []
-        for map_size in self.map_sizes:
-            assert f'out{map_size}' in ref, f'map_size error: {ref}'
-            map_out = ref[f'out{map_size}']
-            for pat_ix in range(len(self.pb_size_patterns)):
-                x = map_out
-                x = shared_layers[f'pm-{pat_ix}_conv1'](x)
-                x = shared_layers[f'pm-{pat_ix}_conv2'](x)
-                conf = shared_layers[f'pm-{pat_ix}_conf'](x)
-                loc = shared_layers[f'pm-{pat_ix}_loc'](x)
-                iou = shared_layers[f'pm-{pat_ix}_iou'](x)
-                conf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_reshape_conf')(conf)
-                loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_reshape_loc')(loc)
-                iou = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_reshape_iou')(iou)
-                confs.append(conf)
-                locs.append(loc)
-                ious.append(iou)
-
-        confs = keras.layers.concatenate(confs, axis=-2, name='output_confs')
-        locs = keras.layers.concatenate(locs, axis=-2, name='output_locs')
-        ious = keras.layers.concatenate(ious, axis=-2, name='output_ious')
+        # shared_layers = {}
+        # shared_layers[f'pm_conv0'] = builder.conv2d(256, (3, 3), name=f'pm_conv0')
+        # shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), name=f'pm_conv0')
+        # for pat_ix in range(len(self.pb_size_patterns)):
+        #     shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
+        #     shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
 
         builder.use_gn = old_gn
 
-        return confs, locs, ious
+        objs, clfs, locs = [], [], []
+        for map_size in self.map_sizes:
+            assert f'out{map_size}' in ref, f'map_size error: {ref}'
+            map_x = ref[f'out{map_size}']
+            # map_x = shared_layers[f'pm_conv0'](map_x)
+            # map_x = shared_layers[f'pm_conv1'](map_x)
+            for pat_ix in range(len(self.pb_size_patterns)):
+                x = map_x
+                # x = shared_layers[f'pm-{pat_ix}_conv1'](x)
+                # x = shared_layers[f'pm-{pat_ix}_conv2'](x)
+                obj = builder.conv2d(
+                    1, (1, 1),
+                    kernel_initializer='zeros',
+                    bias_initializer=tk.dl.losses.od_bias_initializer(1),
+                    bias_regularizer=None,
+                    activation='sigmoid',
+                    use_bn=False,
+                    name=f'pm{map_size}--{pat_ix}_obj')(x)
+                clf = builder.conv2d(
+                    self.nb_classes, (1, 1),
+                    kernel_initializer='zeros',
+                    activation='sigmoid',  # softmaxより速そう (cf. YOLOv3)
+                    use_bn=False,
+                    name=f'pm{map_size}--{pat_ix}_clf')(x)
+                loc = builder.conv2d(
+                    4, (1, 1),
+                    kernel_initializer='zeros',
+                    use_bn=False,
+                    use_act=False,
+                    name=f'pm{map_size}--{pat_ix}_loc')(x)
+                obj = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_reshape_obj')(obj)
+                clf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_reshape_clf')(clf)
+                loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_reshape_loc')(loc)
+                objs.append(obj)
+                clfs.append(clf)
+                locs.append(loc)
+        objs = keras.layers.concatenate(objs, axis=-2, name='output_objs')
+        clfs = keras.layers.concatenate(clfs, axis=-2, name='output_clfs')
+        locs = keras.layers.concatenate(locs, axis=-2, name='output_locs')
+        return objs, clfs, locs
 
-    def _create_predict_network(self, inputs, confs, locs, ious):
+    def _create_predict_network(self, inputs, objs, clfs, locs):
         """予測用ネットワークの作成"""
         import keras
         import keras.backend as K
 
-        def _class(confs):
-            return K.argmax(confs[:, :, 1:], axis=-1) + 1
+        def _conf(objs, clfs):
+            objs = objs[:, :, 0]
+            confs = K.max(clfs, axis=-1)
+            # objectnessとconfidenceの調和平均をconfidenceということにしてみる
+            # conf = 2 / (1 / objs + 1 / confs)
+            # → どうも相乗平均の方がmAP高いっぽい？
+            conf = K.sqrt(objs * confs)
+            return conf * np.expand_dims(self.pb_mask, axis=0)
 
-        def _conf(x):
-            confs = K.max(x[0][:, :, 1:], axis=-1)
-            ious = x[1][:, :, 0]
-            return K.sqrt(confs * ious) * np.expand_dims(self.pb_mask, axis=0)
-
-        def _locs(locs):
-            return self.decode_locs(locs, K)
-
-        objclasses = keras.layers.Lambda(_class, K.int_shape(confs)[1:-1])(confs)
-        objconfs = keras.layers.Lambda(_conf, K.int_shape(confs)[1:-1])([confs, ious])
-        locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
-
-        return keras.models.Model(inputs=inputs, outputs=[objclasses, objconfs, locs])
+        classes = keras.layers.Lambda(lambda x: K.argmax(x, axis=-1), K.int_shape(clfs)[1:-1])(clfs)
+        objconfs = keras.layers.Lambda(lambda x: _conf(x[0], x[1]), K.int_shape(clfs)[1:-1])([objs, clfs])
+        locs = keras.layers.Lambda(lambda x: self.decode_locs(x, K), K.int_shape(locs)[1:])(locs)
+        return keras.models.Model(inputs=inputs, outputs=[classes, objconfs, locs])
 
     def create_generator(self, encode_truth=True):
         """ImageDataGeneratorを作って返す。"""
@@ -756,33 +678,29 @@ class ObjectDetector(object):
         gen.add(tk.image.RandomErasing(probability=0.5))
         gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
         if encode_truth:
-            gen.add(tk.image.ProcessOutput(self._process_output))
+            gen.add(tk.image.ProcessOutput(lambda y: y if y is None else self.encode_truth([y])[0]))
         return gen
 
     def _transform(self, rgb: np.ndarray, y: tk.ml.ObjectsAnnotation, w, rand: np.random.RandomState, ctx: tk.generator.GeneratorContext):
         """変形を伴うAugmentation。"""
         assert ctx is not None
-
-        # 左右反転
-        if rand.rand() <= 0.5:
-            rgb = tk.ndimage.flip_lr(rgb)
-            if y is not None:
-                y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
-
         aspect_rations = (3 / 4, 4 / 3)
         aspect_prob = 0.5
         ar = np.sqrt(rand.choice(aspect_rations)) if rand.rand() <= aspect_prob else 1
         # padding or crop
         if rand.rand() <= 0.5:
-            # padding (zoom out)
-            rgb = self._padding(rgb, ar, rand, y)
+            rgb = self._padding(rgb, y, rand, ar)
         else:
-            # crop (zoom in)
-            # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
-            rgb = self._crop(y, rgb, rand, ar)
+            rgb = self._crop(rgb, y, rand, ar)
+        # 左右反転
+        if rand.rand() <= 0.5:
+            rgb = tk.ndimage.flip_lr(rgb)
+            if y is not None:
+                y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
         return rgb, y, w
 
-    def _padding(self, rgb, ar, rand, y):
+    def _padding(self, rgb, y, rand, ar):
+        """Padding(zoom-out)。"""
         old_w, old_h = rgb.shape[1], rgb.shape[0]
         for _ in range(30):
             pr = np.random.uniform(1.5, 4)  # SSDは16倍とか言っているが、やり過ぎな気がするので適当
@@ -814,7 +732,8 @@ class ObjectDetector(object):
             break
         return rgb
 
-    def _crop(self, y, rgb, rand, ar):
+    def _crop(self, rgb, y, rand, ar):
+        """Crop(zoom-in)。"""
         # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
         bb_center = (y.bboxes[:, 2:] - y.bboxes[:, :2]) / 2  # y.bboxesの中央の座標
         bb_center *= [rgb.shape[1], rgb.shape[0]]
@@ -843,11 +762,6 @@ class ObjectDetector(object):
             assert rgb.shape[0] == ch
             break
         return rgb
-
-    def _process_output(self, y):
-        if y is not None:
-            y = self.encode_truth([y])[0]
-        return y
 
     def save(self, path: pathlib.Path):
         """保存。"""

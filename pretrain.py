@@ -16,7 +16,6 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _main():
-    tk.better_exceptions()
     hvd.init()
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
@@ -54,10 +53,10 @@ def _run(args):
     gen.add(tk.image.RandomErasing(probability=0.5))
     gen.add(tk.image.ProcessInput(od.get_preprocess_input(), batch_axis=True))
 
-    model = tk.dl.models.Model(model, gen, use_horovod=True)
+    model = tk.dl.models.Model(model, gen, args.batch_size, use_horovod=True)
 
-    base_lr = 0.5 * args.batch_size * hvd.size() / 256
-    model.compile(tk.dl.optimizers.nsgd()(lr=base_lr), 'mse', ['mae'])
+    sgd_lr = 0.5 / 256
+    model.compile(sgd_lr=sgd_lr, loss='mse', metrics=['mae'])
 
     callbacks = []
     callbacks.append(tk.dl.callbacks.learning_rate())
@@ -68,7 +67,7 @@ def _run(args):
     callbacks.append(tk.dl.callbacks.freeze_bn(0.95))
 
     model.fit(X_train, y_train,
-              batch_size=args.batch_size, epochs=args.epochs, callbacks=callbacks,
+              epochs=args.epochs, callbacks=callbacks,
               validation_data=(X_test, y_test))
     if hvd.rank() == 0:
         model.model.save(str(RESULT_DIR / 'pretrain.model.h5'))

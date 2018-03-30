@@ -24,7 +24,7 @@ feature map毎に8種類のprior boxを出力する。
 
 8種類のprior boxのサイズ・アスペクト比は、訓練データからKMeansを使用して決める。
 IoUは重心が一致している想定で算出する。
-([YOLO9000](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
+([YOLOv2](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
 
 ## 損失関数：分類
 
