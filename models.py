@@ -451,7 +451,7 @@ class ObjectDetector(object):
         gt_obj = y_true[:, :, 0]
         gt_locs, pred_locs = y_true[:, :, -4:], y_pred[:, :, -4:]
         loss = tk.dl.losses.l1_smooth_loss(gt_locs, pred_locs)
-        loss = K.sum(loss, axis=-1)  # loss(x1) + loss(y1) + loss(x2) + loss(y2)
+        loss = K.mean(loss, axis=-1)  # loss(x1) + loss(y1) + loss(x2) + loss(y2)
         loss = K.sum(gt_obj * loss, axis=-1) / K.sum(gt_obj, axis=-1)  # mean (box)
         return loss
 
@@ -494,6 +494,7 @@ class ObjectDetector(object):
         # center
         x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
         x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
+        x = builder.conv2d(256, (3, 3), name='center_conv3')(x)
         x = keras.layers.AveragePooling2D((map_size, map_size), name='center_ds')(x)
         x = builder.conv2d(256, (1, 1), name='center_dense')(x)
         ref[f'out{1}'] = x
@@ -506,9 +507,7 @@ class ObjectDetector(object):
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
             x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 kernel_initializer='zeros',
-                                 use_bias=False, use_bn=False, use_act=False,
-                                 name=f'up{up_index}_us')(x)
+                                 use_act=False, name=f'up{up_index}_us')(x)
             t = ref[f'down{map_size}']
             t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
@@ -555,7 +554,7 @@ class ObjectDetector(object):
             ref_list.append(x)
         elif self.base_network == 'vgg16':
             basenet = keras.applications.VGG16(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            tk.dl.models.freeze_to_name(basenet, 'block5_conv1', skip_bn=True)
+            tk.dl.models.freeze_to_name(basenet, 'block4_pool', skip_bn=True)
             ref_list.append(basenet.get_layer(name='block4_pool').input)
             ref_list.append(basenet.get_layer(name='block5_pool').input)
         elif self.base_network == 'resnet50':

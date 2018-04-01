@@ -18,7 +18,7 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-type', help='データの種類。', default='voc', choices=['voc', 'csv'])
-    parser.add_argument('--base-network', help='ベースネットワークの種類。', default='resnet50', choices=['custom', 'vgg16', 'resnet50', 'xception'])
+    parser.add_argument('--base-network', help='ベースネットワークの種類。', default='vgg16', choices=['custom', 'vgg16', 'resnet50', 'xception'])
     parser.add_argument('--input-size', help='入力画像の一辺のサイズ。320、512など。', default=320, type=int)
     parser.add_argument('--map-sizes', help='prior boxの一辺の数。', nargs='+', default=[40, 20, 10], type=int)
     args = parser.parse_args()
