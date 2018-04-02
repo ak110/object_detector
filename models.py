@@ -449,7 +449,7 @@ class ObjectDetector(object):
         gt_obj = y_true[:, :, 1]
         gt_classes, pred_classes = y_true[:, :, 2:-4], y_pred[:, :, 2:-4]
         loss = K.binary_crossentropy(gt_classes, pred_classes)
-        loss = K.mean(loss, axis=-1)  # mean (classes)
+        loss = K.sum(loss, axis=-1)  # sum(classes)
         loss = K.sum(gt_obj * loss, axis=-1) / K.sum(gt_obj, axis=-1)  # mean (box)
         return loss
 
@@ -460,7 +460,7 @@ class ObjectDetector(object):
         gt_obj = y_true[:, :, 1]
         gt_locs, pred_locs = y_true[:, :, -4:], y_pred[:, :, -4:]
         loss = tk.dl.losses.l1_smooth_loss(gt_locs, pred_locs)
-        loss = K.mean(loss, axis=-1)  # loss(x1) + loss(y1) + loss(x2) + loss(y2)
+        loss = K.sum(loss, axis=-1)  # loss(x1) + loss(y1) + loss(x2) + loss(y2)
         loss = K.sum(gt_obj * loss, axis=-1) / K.sum(gt_obj, axis=-1)  # mean (box)
         return loss
 
@@ -538,7 +538,7 @@ class ObjectDetector(object):
         else:
             # ラベル側とshapeを合わせるためのダミー
             dummy_shape = (len(self.pb_locs), 1)
-            dummy = keras.layers.Lambda(lambda x: K.zeros((K.shape(x)[0],) + dummy_shape), dummy_shape)(objs)
+            dummy = keras.layers.Lambda(K.zeros_like, dummy_shape)(objs)  # objsとちょうどshapeが同じなのでzeros_like。
             # いったんくっつける (損失関数の中で分割して使う)
             outputs = keras.layers.concatenate([dummy, objs, clfs, locs], axis=-1, name='outputs')
             model = keras.models.Model(inputs=inputs, outputs=outputs)
@@ -612,12 +612,12 @@ class ObjectDetector(object):
 
         old_gn, builder.use_gn = builder.use_gn, True
 
-        # shared_layers = {}
-        # shared_layers[f'pm_conv0'] = builder.conv2d(256, (3, 3), name=f'pm_conv0')
-        # shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), name=f'pm_conv0')
-        # for pat_ix in range(len(self.pb_size_patterns)):
-        #     shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
-        #     shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
+        shared_layers = {}
+        shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), name=f'pm_conv1')
+        shared_layers[f'pm_conv2'] = builder.conv2d(256, (3, 3), name=f'pm_conv2')
+        for pat_ix in range(len(self.pb_size_patterns)):
+            shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
+            shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
 
         builder.use_gn = old_gn
 
@@ -625,12 +625,12 @@ class ObjectDetector(object):
         for map_size in self.map_sizes:
             assert f'out{map_size}' in ref, f'map_size error: {ref}'
             map_x = ref[f'out{map_size}']
-            # map_x = shared_layers[f'pm_conv0'](map_x)
-            # map_x = shared_layers[f'pm_conv1'](map_x)
+            map_x = shared_layers[f'pm_conv1'](map_x)
+            map_x = shared_layers[f'pm_conv2'](map_x)
             for pat_ix in range(len(self.pb_size_patterns)):
                 x = map_x
-                # x = shared_layers[f'pm-{pat_ix}_conv1'](x)
-                # x = shared_layers[f'pm-{pat_ix}_conv2'](x)
+                x = shared_layers[f'pm-{pat_ix}_conv1'](x)
+                x = shared_layers[f'pm-{pat_ix}_conv2'](x)
                 obj = builder.conv2d(
                     1, (1, 1),
                     kernel_initializer='zeros',
@@ -667,18 +667,24 @@ class ObjectDetector(object):
         import keras
         import keras.backend as K
 
-        def _conf(objs, clfs):
-            objs = objs[:, :, 0]
-            confs = K.max(clfs, axis=-1)
+        def _classes(x):
+            return K.argmax(x, axis=-1)
+
+        def _conf(x):
+            objs = x[0][:, :, 0]
+            confs = K.max(x[1], axis=-1)
             # objectnessとconfidenceの調和平均をconfidenceということにしてみる
             # conf = 2 / (1 / objs + 1 / confs)
             # → どうも相乗平均の方がmAP高いっぽい？
             conf = K.sqrt(objs * confs)
             return conf * np.expand_dims(self.pb_mask, axis=0)
 
-        classes = keras.layers.Lambda(lambda x: K.argmax(x, axis=-1), K.int_shape(clfs)[1:-1])(clfs)
-        objconfs = keras.layers.Lambda(lambda x: _conf(x[0], x[1]), K.int_shape(clfs)[1:-1])([objs, clfs])
-        locs = keras.layers.Lambda(lambda x: self.decode_locs(x, K), K.int_shape(locs)[1:])(locs)
+        def _locs(x):
+            return self.decode_locs(x, K)
+
+        classes = keras.layers.Lambda(_classes, K.int_shape(clfs)[1:-1])(clfs)
+        objconfs = keras.layers.Lambda(_conf, K.int_shape(clfs)[1:-1])([objs, clfs])
+        locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
         return keras.models.Model(inputs=inputs, outputs=[classes, objconfs, locs])
 
     def create_generator(self, encode_truth=True):
