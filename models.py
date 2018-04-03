@@ -622,13 +622,34 @@ class ObjectDetector(object):
         old_gn, builder.use_gn = builder.use_gn, True
 
         shared_layers = {}
-        shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), use_bn=False, use_act=False, name='pm_conv1')
-        shared_layers[f'pm_conv2_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv2_1')
-        shared_layers[f'pm_conv2_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv2_2')
-        shared_layers[f'pm_conv3_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv3_1')
-        shared_layers[f'pm_conv3_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv3_2')
-        shared_layers[f'pm_bn'] = builder.bn(name='pm_bn')
-        shared_layers[f'pm_act'] = builder.act(name='pm_act')
+        shared_layers['pm_conv1'] = builder.conv2d(256, (3, 3), use_bn=False, use_act=False, name='pm_conv1')
+        shared_layers['pm_conv2_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv2_1')
+        shared_layers['pm_conv2_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv2_2')
+        shared_layers['pm_conv3_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv3_1')
+        shared_layers['pm_conv3_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv3_2')
+        shared_layers['pm_bn'] = builder.bn(name='pm_bn')
+        shared_layers['pm_act'] = builder.act(name='pm_act')
+        for pat_ix in range(len(self.pb_size_patterns)):
+            shared_layers[f'pm-{pat_ix}_obj'] = builder.conv2d(
+                1, (1, 1),
+                kernel_initializer='zeros',
+                bias_initializer=tk.dl.losses.od_bias_initializer(1),
+                bias_regularizer=None,
+                activation='sigmoid',
+                use_bn=False,
+                name=f'pm-{pat_ix}_obj')
+            shared_layers[f'pm-{pat_ix}_clf'] = builder.conv2d(
+                self.nb_classes, (1, 1),
+                kernel_initializer='zeros',
+                activation='sigmoid',  # softmaxより速そう (cf. YOLOv3)
+                use_bn=False,
+                name=f'pm-{pat_ix}_clf')
+            shared_layers[f'pm-{pat_ix}_loc'] = builder.conv2d(
+                4, (1, 1),
+                kernel_initializer='zeros',
+                use_bn=False,
+                use_act=False,
+                name=f'pm-{pat_ix}_loc')
         for layer in shared_layers.values():
             w = layer.trainable_weights
             lr_multipliers.update(zip(w, [1 / len(self.map_sizes)] * len(w)))  # 共有部分の学習率調整
@@ -651,26 +672,9 @@ class ObjectDetector(object):
             x = shared_layers[f'pm_bn'](x)
             x = shared_layers[f'pm_act'](x)
             for pat_ix in range(len(self.pb_size_patterns)):
-                obj = builder.conv2d(
-                    1, (1, 1),
-                    kernel_initializer='zeros',
-                    bias_initializer=tk.dl.losses.od_bias_initializer(1),
-                    bias_regularizer=None,
-                    activation='sigmoid',
-                    use_bn=False,
-                    name=f'pm{map_size}--{pat_ix}_obj')(x)
-                clf = builder.conv2d(
-                    self.nb_classes, (1, 1),
-                    kernel_initializer='zeros',
-                    activation='sigmoid',  # softmaxより速そう (cf. YOLOv3)
-                    use_bn=False,
-                    name=f'pm{map_size}--{pat_ix}_clf')(x)
-                loc = builder.conv2d(
-                    4, (1, 1),
-                    kernel_initializer='zeros',
-                    use_bn=False,
-                    use_act=False,
-                    name=f'pm{map_size}--{pat_ix}_loc')(x)
+                obj = shared_layers[f'pm-{pat_ix}_obj'](x)
+                clf = shared_layers[f'pm-{pat_ix}_clf'](x)
+                loc = shared_layers[f'pm-{pat_ix}_loc'](x)
                 obj = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_reshape_obj')(obj)
                 clf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_reshape_clf')(clf)
                 loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_reshape_loc')(loc)
