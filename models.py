@@ -549,7 +549,7 @@ class ObjectDetector(object):
         logger = tk.log.get(__name__)
         logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
         logger.info('trainable params: %d', tk.dl.models.count_trainable_params(model))
-        return model
+        return model, lr_multipliers
 
     @tk.log.trace()
     def _create_basenet(self, builder, x, load_weights):
