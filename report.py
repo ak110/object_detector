@@ -32,7 +32,7 @@ def _report_net(args):
 
     import keras
     with tk.dl.session():
-        model = od.create_network()
+        model, _ = od.create_network()
 
         with tk.log.trace_scope('network.txt'):
             with (args.result_dir / 'network.txt').open('w') as f:

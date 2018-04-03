@@ -479,8 +479,9 @@ class ObjectDetector(object):
         builder = tk.dl.layers.Builder()
 
         x = inputs = keras.layers.Input(image_size + (3,))
-        x, _ = self._create_basenet(builder, x, load_weights=True)
+        x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
         assert builder.shape(x)[1] == 3
+        assert len(lr_multipliers) == 0
         x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
         model = keras.models.Model(inputs=inputs, outputs=x)
 
@@ -498,7 +499,7 @@ class ObjectDetector(object):
 
         # downsampling (ベースネットワーク)
         x = inputs = keras.layers.Input(self.image_size + (3,))
-        x, ref = self._create_basenet(builder, x, load_weights)
+        x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
         map_size = builder.shape(x)[1]
 
         # center
@@ -516,8 +517,10 @@ class ObjectDetector(object):
             in_map_size = builder.shape(x)[1]
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
+            x = keras.layers.Dropout(0.5)(x)
             x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 use_act=False, name=f'up{up_index}_us')(x)
+                                 kernel_initializer='zeros',
+                                 use_bn=False, use_act=False, name=f'up{up_index}_us')(x)
             t = ref[f'down{map_size}']
             t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
@@ -531,7 +534,7 @@ class ObjectDetector(object):
             map_size *= 2
 
         # prediction module
-        objs, clfs, locs = self._create_pm(builder, ref)
+        objs, clfs, locs = self._create_pm(builder, ref, lr_multipliers)
 
         if for_predict:
             model = self._create_predict_network(inputs, objs, clfs, locs)
@@ -552,6 +555,7 @@ class ObjectDetector(object):
     def _create_basenet(self, builder, x, load_weights):
         """ベースネットワークの作成。"""
         import keras
+        basenet = None
         ref_list = []
         if self.base_network == 'custom':
             x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
@@ -567,24 +571,29 @@ class ObjectDetector(object):
             ref_list.append(x)
         elif self.base_network == 'vgg16':
             basenet = keras.applications.VGG16(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            tk.dl.models.freeze_to_name(basenet, 'block4_pool', skip_bn=True)
             ref_list.append(basenet.get_layer(name='block4_pool').input)
             ref_list.append(basenet.get_layer(name='block5_pool').input)
         elif self.base_network == 'resnet50':
             basenet = keras.applications.ResNet50(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            tk.dl.models.freeze_to_name(basenet, 'res4f_branch2a', skip_bn=True)
             ref_list.append(basenet.get_layer(name='res4a_branch2a').input)
             ref_list.append(basenet.get_layer(name='res5a_branch2a').input)
             ref_list.append(basenet.get_layer(name='avg_pool').input)
         elif self.base_network == 'xception':
             basenet = keras.applications.Xception(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
-            tk.dl.models.freeze_to_name(basenet, 'block10_sepconv1_act', skip_bn=True)
             ref_list.append(basenet.get_layer(name='block4_sepconv1_act').input)
             ref_list.append(basenet.get_layer(name='block13_sepconv1_act').input)
             ref_list.append(basenet.get_layer(name='block14_sepconv2_act').output)
         else:
             assert False
 
+        # 転移学習元部分の学習率は控えめにする
+        lr_multipliers = {}
+        if basenet is not None:
+            for layer in basenet.layers:
+                w = layer.trainable_weights
+                lr_multipliers.update(zip(w, [0.01] * len(w)))
+
+        # チャンネル数が多ければここで減らす
         x = ref_list[-1]
         if builder.shape(x)[-1] > 256:
             x = builder.conv2d(256, (1, 1), name='tail_sq')(x)
@@ -603,34 +612,45 @@ class ObjectDetector(object):
                 break
 
         ref = {f'down{builder.shape(x)[1]}': x for x in ref_list}
-        return x, ref
+        return x, ref, lr_multipliers
 
     @tk.log.trace()
-    def _create_pm(self, builder, ref):
+    def _create_pm(self, builder, ref, lr_multipliers):
         """Prediction module."""
         import keras
 
         old_gn, builder.use_gn = builder.use_gn, True
 
         shared_layers = {}
-        shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), name=f'pm_conv1')
-        shared_layers[f'pm_conv2'] = builder.conv2d(256, (3, 3), name=f'pm_conv2')
-        for pat_ix in range(len(self.pb_size_patterns)):
-            shared_layers[f'pm-{pat_ix}_conv1'] = builder.conv2d(64, (1, 1), name=f'pm-{pat_ix}_conv1')
-            shared_layers[f'pm-{pat_ix}_conv2'] = builder.conv2d(64, (3, 3), name=f'pm-{pat_ix}_conv2')
+        shared_layers[f'pm_conv1'] = builder.conv2d(256, (3, 3), use_bn=False, use_act=False, name='pm_conv1')
+        shared_layers[f'pm_conv2_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv2_1')
+        shared_layers[f'pm_conv2_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv2_2')
+        shared_layers[f'pm_conv3_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv3_1')
+        shared_layers[f'pm_conv3_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv3_2')
+        shared_layers[f'pm_bn'] = builder.bn(name='pm_bn')
+        shared_layers[f'pm_act'] = builder.act(name='pm_act')
+        for layer in shared_layers.values():
+            w = layer.trainable_weights
+            lr_multipliers.update(zip(w, [1 / len(self.map_sizes)] * len(w)))  # 共有部分の学習率調整
 
         builder.use_gn = old_gn
 
         objs, clfs, locs = [], [], []
         for map_size in self.map_sizes:
             assert f'out{map_size}' in ref, f'map_size error: {ref}'
-            map_x = ref[f'out{map_size}']
-            map_x = shared_layers[f'pm_conv1'](map_x)
-            map_x = shared_layers[f'pm_conv2'](map_x)
+            x = ref[f'out{map_size}']
+            x = shared_layers[f'pm_conv1'](x)
+            t = x
+            x = shared_layers[f'pm_conv2_1'](x)
+            x = shared_layers[f'pm_conv2_2'](x)
+            x = keras.layers.add([t, x])
+            t = x
+            x = shared_layers[f'pm_conv2_1'](x)
+            x = shared_layers[f'pm_conv2_2'](x)
+            x = keras.layers.add([t, x])
+            x = shared_layers[f'pm_bn'](x)
+            x = shared_layers[f'pm_act'](x)
             for pat_ix in range(len(self.pb_size_patterns)):
-                x = map_x
-                x = shared_layers[f'pm-{pat_ix}_conv1'](x)
-                x = shared_layers[f'pm-{pat_ix}_conv2'](x)
                 obj = builder.conv2d(
                     1, (1, 1),
                     kernel_initializer='zeros',

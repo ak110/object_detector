@@ -36,7 +36,7 @@ def _run(args):
 
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    model = od.create_network()
+    model, lr_multipliers = od.create_network()
     model = tk.dl.models.Model(model, od.create_generator(), args.batch_size, use_horovod=True)
 
     # 学習済み重みの読み込み
@@ -47,7 +47,7 @@ def _run(args):
             break
 
     sgd_lr = 0.5 / 256 / 3  # 損失関数がconf + loc + iouなのでちょっと調整
-    model.compile(sgd_lr=sgd_lr, loss=od.loss, metrics=od.metrics)
+    model.compile(sgd_lr=sgd_lr, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
 
     callbacks = []
     if args.no_lr_decay:
