@@ -729,11 +729,12 @@ class ObjectDetector(object):
         aspect_rations = (3 / 4, 4 / 3)
         aspect_prob = 0.5
         ar = np.sqrt(rand.choice(aspect_rations)) if rand.rand() <= aspect_prob else 1
+        ar_list = np.array([ar, 1 / ar])
         # padding or crop
         if rand.rand() <= 0.5:
-            rgb = self._padding(rgb, y, rand, ar)
+            rgb = self._padding(rgb, y, rand, ar_list)
         else:
-            rgb = self._crop(rgb, y, rand, ar)
+            rgb = self._crop(rgb, y, rand, ar_list)
         # 左右反転
         if rand.rand() <= 0.5:
             rgb = tk.ndimage.flip_lr(rgb)
@@ -741,67 +742,70 @@ class ObjectDetector(object):
                 y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
         return rgb, y, w
 
-    def _padding(self, rgb, y, rand, ar):
+    def _padding(self, rgb, y, rand, ar_list):
         """Padding(zoom-out)。"""
-        old_w, old_h = rgb.shape[1], rgb.shape[0]
+        old_size = np.array([rgb.shape[1], rgb.shape[0]])
         for _ in range(30):
-            pr = np.random.uniform(1.5, 4)  # SSDは16倍とか言っているが、やり過ぎな気がするので適当
-            pw = max(old_w, int(round(old_w * pr * ar)))
-            ph = max(old_h, int(round(old_h * pr / ar)))
-            px = rand.randint(0, pw - old_w + 1)
-            py = rand.randint(0, ph - old_h + 1)
-            if y is not None:
-                bboxes = np.copy(y.bboxes)
-                bboxes[:, (0, 2)] = px + bboxes[:, (0, 2)] * old_w
-                bboxes[:, (1, 3)] = py + bboxes[:, (1, 3)] * old_h
-                sb = np.round(bboxes * np.tile([self.image_size[1] / pw, self.image_size[0] / ph], 2))
-                if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
-                    continue
-                y.bboxes = bboxes / np.tile([pw, ph], 2)
+            pr = np.random.uniform(1, 4)  # SSD風：[1, 16]
+            padded_size = np.ceil(old_size * np.maximum(pr * ar_list, 1)).astype(int)
+            padding_size = padded_size - old_size
+            paste_xy = np.array([rand.randint(0, padding_size[0] + 1), rand.randint(0, padding_size[1] + 1)])
+            bboxes = np.copy(y.bboxes)
+            bboxes = (np.tile(paste_xy, 2) + bboxes * np.tile(old_size, 2)) / np.tile(padded_size, 2)
+            sb = bboxes * np.tile(self.image_size, 2)
+            if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいbboxが発生するのはNG
+                continue
+            y.bboxes = bboxes
             # 先に縮小
-            rw = self.image_size[1] / pw
-            rh = self.image_size[0] / ph
-            new_w = int(round(old_w * rw))
-            new_h = int(round(old_h * rh))
-            rgb = tk.ndimage.resize(rgb, new_w, new_h, padding=None)
+            new_size = np.round(old_size * self.image_size / padded_size).astype(int)
+            rgb = tk.ndimage.resize(rgb, new_size[0], new_size[1], padding=None)
             # パディング
-            px = int(round(px * rw))
-            py = int(round(py * rh))
+            paste_lr = np.round(paste_xy * self.image_size / padded_size).astype(int)
+            paste_tb = self.image_size - (paste_lr + new_size)
             padding = rand.choice(('edge', 'zero', 'one', 'rand'))
-            rgb = tk.ndimage.pad_ltrb(rgb, px, py, self.image_size[1] - new_w - px, self.image_size[0] - new_h - py, padding, rand)
+            rgb = tk.ndimage.pad_ltrb(rgb, paste_lr[0], paste_lr[1], paste_tb[0], paste_tb[1], padding, rand)
             assert rgb.shape[1] == self.image_size[1]
             assert rgb.shape[0] == self.image_size[0]
             break
         return rgb
 
-    def _crop(self, rgb, y, rand, ar):
+    def _crop(self, rgb, y, rand, ar_list):
         """Crop(zoom-in)。"""
         # SSDでは結構複雑なことをやっているが、とりあえず簡単に実装
-        bb_center = (y.bboxes[:, 2:] - y.bboxes[:, :2]) / 2  # y.bboxesの中央の座標
-        bb_center *= [rgb.shape[1], rgb.shape[0]]
+        bb_center = tk.ml.bboxes_center(y.bboxes)
+        bb_area = tk.ml.bboxes_area(y.bboxes)
+        old_size = np.array([rgb.shape[1], rgb.shape[0]])
         for _ in range(30):
-            crop_rate = 0.15625
-            cr = rand.uniform(1 - crop_rate, 1)  # 元のサイズに対する割合
-            cw = min(rgb.shape[1], int(np.floor(rgb.shape[1] * cr * ar)))
-            ch = min(rgb.shape[0], int(np.floor(rgb.shape[0] * cr / ar)))
-            cx = rand.randint(0, rgb.shape[1] - cw + 1)
-            cy = rand.randint(0, rgb.shape[0] - ch + 1)
-            # 全bboxの中央の座標を含む場合のみOKとする
-            if np.logical_or(bb_center < [cx, cy], [cx + cw, cy + ch] < bb_center).any():
+            cr = rand.uniform(np.sqrt(0.1), 1)  # SSD風：[0.1, 1]
+            cropped_wh = np.floor(old_size * np.minimum(cr * ar_list, 1)).astype(int)
+            cropping_size = old_size - cropped_wh
+            crop_xy = np.array([rand.randint(0, cropping_size[0] + 1), rand.randint(0, cropping_size[1] + 1)])
+            crop_box = np.concatenate([crop_xy, crop_xy + cropped_wh]) / np.tile(old_size, 2)
+            # 中心を含むbboxのみ有効
+            bb_mask = tk.math.in_range(bb_center, crop_box[:2], crop_box[2:]).all(axis=-1)
+            if not bb_mask.any():
                 continue
-            if y is not None:
-                bboxes = np.copy(y.bboxes)
-                bboxes[:, (0, 2)] = np.round(bboxes[:, (0, 2)] * rgb.shape[1] - cx)
-                bboxes[:, (1, 3)] = np.round(bboxes[:, (1, 3)] * rgb.shape[0] - cy)
-                bboxes = np.clip(bboxes, 0, 1)
-                sb = np.round(bboxes * np.tile([self.image_size[1] / cw, self.image_size[0] / ch], 2))
-                if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいのはNG
-                    continue
-                y.bboxes = bboxes / np.tile([cw, ch], 2)
+            # あまり極端に面積が減っていないbboxのみ有効
+            lt = np.maximum(crop_box[np.newaxis, :2], y.bboxes[:, :2])
+            rb = np.minimum(crop_box[np.newaxis, 2:], y.bboxes[:, 2:])
+            cropped_area = (rb - lt).prod(axis=-1) * (lt < rb).all(axis=-1)
+            bb_mask = np.logical_and(bb_mask, cropped_area >= bb_area * 0.3)
+            # bboxが一つも残らなければやり直し
+            if not bb_mask.any():
+                continue
+            bboxes = np.copy(y.bboxes)
+            bboxes = (bboxes * np.tile(old_size, 2) - np.tile(crop_xy, 2)) / np.tile(cropped_wh, 2)
+            bboxes = np.clip(bboxes, 0, 1)
+            sb = bboxes * np.tile(self.image_size, 2)
+            if (sb[:, 2:] - sb[:, :2] < 4).any():  # あまりに小さいbboxが発生するのはNG
+                continue
+            y.bboxes = bboxes[bb_mask]
+            y.classes = y.classes[bb_mask]
+            y.difficults = y.difficults[bb_mask]
             # 切り抜き
-            rgb = tk.ndimage.crop(rgb, cx, cy, cw, ch)
-            assert rgb.shape[1] == cw
-            assert rgb.shape[0] == ch
+            rgb = tk.ndimage.crop(rgb, crop_xy[0], crop_xy[1], cropped_wh[0], cropped_wh[1])
+            assert rgb.shape[1] == cropped_wh[0]
+            assert rgb.shape[0] == cropped_wh[1]
             break
         return rgb
 

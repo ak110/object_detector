@@ -20,9 +20,9 @@ def _main():
     y_test = y_test[:1]
     X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
 
-    od = models.ObjectDetector('xception', input_size=512, map_sizes=[], nb_classes=100, mean_objets=0, pb_size_patterns=np.array([[1.5, 0.5]]))
+    od = models.ObjectDetector('xception', input_size=512, map_sizes=[40, 20, 10], nb_classes=100, mean_objets=0, pb_size_patterns=np.array([[1.5, 0.5]]))
     gen = od.create_generator(encode_truth=False)
-    for i, (X_batch, y_batch) in zip(tk.tqdm(range(16)), gen.flow(X_test, y_test, data_augmentation=True)):
+    for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), gen.flow(X_test, y_test, data_augmentation=True)):
         for X, y in zip(X_batch, y_batch):
             img = tk.image.unpreprocess_input_abs1(X)
             tk.ml.plot_objects(
