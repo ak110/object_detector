@@ -347,7 +347,7 @@ class ObjectDetector(object):
 
         return pb_indices, pb_assigned_gt[pb_indices], pb_valids
 
-    def predict(self, model, X, batch_size, verbose=1, conf_threshold=0.01):
+    def predict(self, model, X, batch_size, verbose=1, conf_threshold=0.1):
         """予測。"""
         pred_classes_list = []
         pred_confs_list = []
@@ -369,7 +369,7 @@ class ObjectDetector(object):
                     break
         return pred_classes_list, pred_confs_list, pred_locs_list
 
-    def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, conf_threshold=0.01, parallel=None):
+    def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, conf_threshold=0.1, parallel=None):
         """予測結果のうちスコアが高いものを取り出す。
 
         入出力は以下の3つの値。画像ごとにconfidenceの降順。
@@ -419,7 +419,7 @@ class ObjectDetector(object):
                 target_locs = pred_locs[targets, :]
                 idx = tk.ml.non_maximum_suppression(target_locs, target_confs, top_k, nms_threshold)
                 # 結果
-                img_classes.append(np.repeat(target_class, idx))
+                img_classes.append(np.repeat(target_class, len(idx)))
                 img_confs.append(target_confs[idx])
                 img_locs.append(target_locs[idx])
         img_classes = np.concatenate(img_classes)
