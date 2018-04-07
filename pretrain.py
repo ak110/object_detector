@@ -54,9 +54,7 @@ def _run(args):
     gen.add(tk.image.ProcessInput(od.get_preprocess_input(), batch_axis=True))
 
     model = tk.dl.models.Model(model, gen, args.batch_size, use_horovod=True)
-
-    sgd_lr = 0.5 / 256
-    model.compile(sgd_lr=sgd_lr, loss='mse', metrics=['mae'])
+    model.compile(sgd_lr=0.5 / 256, loss='mse', metrics=['mae'])
 
     callbacks = []
     callbacks.append(tk.dl.callbacks.learning_rate())
@@ -66,11 +64,9 @@ def _run(args):
         callbacks.append(tk.dl.callbacks.epoch_logger())
     callbacks.append(tk.dl.callbacks.freeze_bn(0.95))
 
-    model.fit(X_train, y_train,
-              epochs=args.epochs, callbacks=callbacks,
-              validation_data=(X_test, y_test))
-    if hvd.rank() == 0:
-        model.model.save(str(RESULT_DIR / 'pretrain.model.h5'))
+    model.fit(X_train, y_train, validation_data=(X_test, y_test),
+              epochs=args.epochs, callbacks=callbacks)
+    model.save(RESULT_DIR / 'pretrain.model.h5')
 
 
 if __name__ == '__main__':

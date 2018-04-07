@@ -62,8 +62,7 @@ def _run(args):
 
     model.fit(X_train, y_train, validation_data=(X_test, y_test),
               epochs=args.epochs, callbacks=callbacks)
-    if hvd.rank() == 0:
-        model.save(RESULT_DIR / 'model.h5')
+    model.save(RESULT_DIR / 'model.h5')
 
 
 if __name__ == '__main__':

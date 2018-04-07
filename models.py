@@ -147,6 +147,17 @@ class ObjectDetector(object):
                     'count': len(prior_boxes),
                 })
 
+    def save(self, path: pathlib.Path):
+        """保存。"""
+        joblib.dump(self, path)
+
+    @staticmethod
+    def load(path: pathlib.Path):
+        """読み込み。"""
+        od = joblib.load(path)  # type: ObjectDetector
+        od.summary()
+        return od
+
     def summary(self, logger=None):
         """サマリ表示。"""
         logger = logger or tk.log.get(__name__)
@@ -277,7 +288,7 @@ class ObjectDetector(object):
         戻り値は、prior boxのindexとbboxesのindexのタプルのリスト。
         """
         assert len(bboxes) >= 1
-        bb_centers = np.mean([bboxes[:, 2:], bboxes[:, :2]], axis=0)
+        bb_centers = tk.ml.bboxes_center(bboxes)
 
         pb_assigned_gt = -np.ones((len(self.pb_locs),), dtype=int)  # -1埋め
         pb_assigned_iou = np.zeros((len(self.pb_locs),), dtype=float)
@@ -285,7 +296,7 @@ class ObjectDetector(object):
         pb_valids = np.ones((len(self.pb_locs),), dtype=bool)
 
         # 面積の降順に並べ替え (おまじない: 出来るだけ小さいのが埋もれないように)
-        sorted_indices = np.prod(bboxes[:, 2:] - bboxes[:, :2], axis=-1).argsort()[::-1]
+        sorted_indices = tk.ml.bboxes_area(bboxes).argsort()[::-1]
         # とりあえずSSD風にIoU >= 0.5に割り当て
         for gt_ix, bbox, bb_center in zip(sorted_indices, bboxes[sorted_indices], bb_centers[sorted_indices]):
             # bboxの重心が含まれるprior boxにのみ割り当てる
@@ -336,7 +347,29 @@ class ObjectDetector(object):
 
         return pb_indices, pb_assigned_gt[pb_indices], pb_valids
 
-    def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, parallel=None):
+    def predict(self, model, X, batch_size, verbose=1, conf_threshold=0.01):
+        """予測。"""
+        pred_classes_list = []
+        pred_confs_list = []
+        pred_locs_list = []
+        gen = self.create_generator()
+        steps = gen.steps_per_epoch(len(X), batch_size)
+        with tk.tqdm(total=len(X), unit='f', desc='predict', disable=verbose == 0) as pbar, joblib.Parallel(batch_size, backend='threading') as parallel:
+            for i, X_batch in enumerate(gen.flow(X, batch_size=batch_size)):
+                # 予測
+                pcl, pcf, pl = model.predict(X_batch)
+                # NMSなど
+                pcl, pcf, pl = self.select_predictions(pcl, pcf, pl, conf_threshold=conf_threshold, parallel=parallel)
+                pred_classes_list.extend(pcl)
+                pred_confs_list.extend(pcf)
+                pred_locs_list.extend(pl)
+                # 次へ
+                pbar.update(len(X_batch))
+                if i + 1 >= steps:
+                    break
+        return pred_classes_list, pred_confs_list, pred_locs_list
+
+    def select_predictions(self, classes_list, confs_list, locs_list, top_k=200, nms_threshold=0.45, conf_threshold=0.01, parallel=None):
         """予測結果のうちスコアが高いものを取り出す。
 
         入出力は以下の3つの値。画像ごとにconfidenceの降順。
@@ -352,11 +385,11 @@ class ObjectDetector(object):
         assert locs_list.shape == (num_images, len(self.pb_locs), 4)
         # 画像毎にループ
         if parallel:
-            jobs = [joblib.delayed(self._select, check_pickle=False)(pc, pf, pl, top_k, nms_threshold)
+            jobs = [joblib.delayed(self._select, check_pickle=False)(pc, pf, pl, top_k, nms_threshold, conf_threshold)
                     for pc, pf, pl in zip(classes_list, confs_list, locs_list)]
             result_classes, result_confs, result_locs = zip(*parallel(jobs))
         else:
-            results = [self._select(pc, pf, pl, top_k, nms_threshold)
+            results = [self._select(pc, pf, pl, top_k, nms_threshold, conf_threshold)
                        for pc, pf, pl in zip(classes_list, confs_list, locs_list)]
             result_classes, result_confs, result_locs = zip(*results)
         assert len(result_classes) == num_images
@@ -364,34 +397,39 @@ class ObjectDetector(object):
         assert len(result_locs) == num_images
         return result_classes, result_confs, result_locs
 
-    def _select(self, pred_classes, pred_confs, pred_locs, top_k, nms_threshold):
+    def _select(self, pred_classes, pred_confs, pred_locs, top_k, nms_threshold, conf_threshold):
         # 適当に上位のみ見る
-        conf_mask = pred_confs.argsort()[::-1][:top_k * 4]
-        pred_classes = pred_classes[conf_mask]
-        pred_confs = pred_confs[conf_mask]
-        pred_locs = pred_locs[conf_mask, :]
+        conf_mask1 = pred_confs > conf_threshold
+        if not conf_mask1.any():
+            max_ix = conf_mask1.argmax()
+            return pred_classes[max_ix:max_ix + 1], pred_confs[max_ix:max_ix + 1], pred_locs[max_ix:max_ix + 1]
+        conf_mask2 = pred_confs[conf_mask1].argsort()[::-1][:top_k * 4]
+        pred_classes = pred_classes[conf_mask1][conf_mask2]
+        pred_confs = pred_confs[conf_mask1][conf_mask2]
+        pred_locs = pred_locs[conf_mask1, :][conf_mask2, :]
         # クラスごとに処理
         img_classes = []
         img_confs = []
         img_locs = []
         for target_class in range(self.nb_classes):
             targets = pred_classes == target_class
-            if not targets.any():
-                continue
-            # 重複を除くtop_k個を採用
-            target_confs = pred_confs[targets]
-            target_locs = pred_locs[targets, :]
-            idx = tk.ml.non_maximum_suppression(target_locs, target_confs, top_k, nms_threshold)
-            # 結果
-            img_classes.extend([target_class] * len(idx))
-            img_confs.extend(target_confs[idx])
-            img_locs.extend(target_locs[idx])
+            if targets.any():
+                # 重複を除くtop_k個を採用
+                target_confs = pred_confs[targets]
+                target_locs = pred_locs[targets, :]
+                idx = tk.ml.non_maximum_suppression(target_locs, target_confs, top_k, nms_threshold)
+                # 結果
+                img_classes.append(np.repeat(target_class, idx))
+                img_confs.append(target_confs[idx])
+                img_locs.append(target_locs[idx])
+        img_classes = np.concatenate(img_classes)
+        img_confs = np.concatenate(img_confs)
+        img_locs = np.concatenate(img_locs)
         # 最終結果 (confidence降順に並べつつもう一度top_k)
-        img_confs = np.array(img_confs)
         sorted_indices = img_confs.argsort()[::-1][:top_k]
         img_confs = img_confs[sorted_indices]
-        img_classes = np.array(img_classes)[sorted_indices]
-        img_locs = np.array(img_locs)[sorted_indices]
+        img_classes = img_classes[sorted_indices]
+        img_locs = img_locs[sorted_indices]
         assert img_classes.shape == (len(sorted_indices),)
         assert img_confs.shape == (len(sorted_indices),)
         assert img_locs.shape == (len(sorted_indices), 4)
@@ -716,6 +754,7 @@ class ObjectDetector(object):
         gen = tk.image.ImageDataGenerator()
         gen.add(tk.image.CustomAugmentation(self._transform, probability=1))
         gen.add(tk.image.Resize(self.image_size))
+        gen.add(tk.image.RandomFlipLR(probability=0.5))
         gen.add(tk.image.RandomColorAugmentors(probability=0.5))
         gen.add(tk.image.RandomErasing(probability=0.5))
         gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
@@ -735,11 +774,6 @@ class ObjectDetector(object):
             rgb = self._padding(rgb, y, rand, ar_list)
         else:
             rgb = self._crop(rgb, y, rand, ar_list)
-        # 左右反転
-        if rand.rand() <= 0.5:
-            rgb = tk.ndimage.flip_lr(rgb)
-            if y is not None:
-                y.bboxes[:, [0, 2]] = 1 - y.bboxes[:, [2, 0]]
         return rgb, y, w
 
     def _padding(self, rgb, y, rand, ar_list):
@@ -764,8 +798,7 @@ class ObjectDetector(object):
             paste_tb = self.image_size - (paste_lr + new_size)
             padding = rand.choice(('edge', 'zero', 'one', 'rand'))
             rgb = tk.ndimage.pad_ltrb(rgb, paste_lr[0], paste_lr[1], paste_tb[0], paste_tb[1], padding, rand)
-            assert rgb.shape[1] == self.image_size[1]
-            assert rgb.shape[0] == self.image_size[0]
+            assert rgb.shape[:2] == self.image_size
             break
         return rgb
 
@@ -804,18 +837,6 @@ class ObjectDetector(object):
             y.difficults = y.difficults[bb_mask]
             # 切り抜き
             rgb = tk.ndimage.crop(rgb, crop_xy[0], crop_xy[1], cropped_wh[0], cropped_wh[1])
-            assert rgb.shape[1] == cropped_wh[0]
-            assert rgb.shape[0] == cropped_wh[1]
+            assert rgb.shape[:2] == cropped_wh[::-1]
             break
         return rgb
-
-    def save(self, path: pathlib.Path):
-        """保存。"""
-        joblib.dump(self, path)
-
-    @staticmethod
-    def load(path: pathlib.Path):
-        """読み込み。"""
-        od = joblib.load(path)  # type: ObjectDetector
-        od.summary()
-        return od
