@@ -746,7 +746,7 @@ class ObjectDetector(object):
         """Padding(zoom-out)。"""
         old_size = np.array([rgb.shape[1], rgb.shape[0]])
         for _ in range(30):
-            pr = np.random.uniform(1, 4)  # SSD風：[1, 16]
+            pr = np.exp(rand.uniform(np.log(1), np.log(4)))  # SSD風：[1, 16]
             padded_size = np.ceil(old_size * np.maximum(pr * ar_list, 1)).astype(int)
             padding_size = padded_size - old_size
             paste_xy = np.array([rand.randint(0, padding_size[0] + 1), rand.randint(0, padding_size[1] + 1)])
@@ -776,7 +776,7 @@ class ObjectDetector(object):
         bb_area = tk.ml.bboxes_area(y.bboxes)
         old_size = np.array([rgb.shape[1], rgb.shape[0]])
         for _ in range(30):
-            cr = rand.uniform(np.sqrt(0.1), 1)  # SSD風：[0.1, 1]
+            cr = np.exp(rand.uniform(np.log(np.sqrt(0.1)), np.log(1)))  # SSD風：[0.1, 1]
             cropped_wh = np.floor(old_size * np.minimum(cr * ar_list, 1)).astype(int)
             cropping_size = old_size - cropped_wh
             crop_xy = np.array([rand.randint(0, cropping_size[0] + 1), rand.randint(0, cropping_size[1] + 1)])
