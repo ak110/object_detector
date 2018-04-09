@@ -555,16 +555,14 @@ class ObjectDetector(object):
             in_map_size = builder.shape(x)[1]
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
-            x = keras.layers.Dropout(0.5)(x)
+            x = keras.layers.Dropout(0.25)(x)
             x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 kernel_initializer='zeros',
-                                 use_bn=False, use_act=False, name=f'up{up_index}_us')(x)
+                                 use_act=False, name=f'up{up_index}_us')(x)
             t = ref[f'down{map_size}']
             t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
             x = builder.bn_act(name=f'up{up_index}_mix')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv')(x)
             ref[f'out{map_size}'] = x
 
             if self.map_sizes[0] <= map_size:
@@ -702,20 +700,20 @@ class ObjectDetector(object):
             t = x
             x = shared_layers[f'pm_conv2_1'](x)
             x = shared_layers[f'pm_conv2_2'](x)
-            x = keras.layers.add([t, x])
+            x = keras.layers.add([t, x], name=f'pm{map_size}_mix1')
             t = x
             x = shared_layers[f'pm_conv2_1'](x)
             x = shared_layers[f'pm_conv2_2'](x)
-            x = keras.layers.add([t, x])
+            x = keras.layers.add([t, x], name=f'pm{map_size}_mix2')
             x = shared_layers[f'pm_bn'](x)
             x = shared_layers[f'pm_act'](x)
             for pat_ix in range(len(self.pb_size_patterns)):
                 obj = shared_layers[f'pm-{pat_ix}_obj'](x)
                 clf = shared_layers[f'pm-{pat_ix}_clf'](x)
                 loc = shared_layers[f'pm-{pat_ix}_loc'](x)
-                obj = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_reshape_obj')(obj)
-                clf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_reshape_clf')(clf)
-                loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_reshape_loc')(loc)
+                obj = keras.layers.Reshape((-1, 1), name=f'pm{map_size}-{pat_ix}_r1')(obj)
+                clf = keras.layers.Reshape((-1, self.nb_classes), name=f'pm{map_size}-{pat_ix}_r2')(clf)
+                loc = keras.layers.Reshape((-1, 4), name=f'pm{map_size}-{pat_ix}_r3')(loc)
                 objs.append(obj)
                 clfs.append(clf)
                 locs.append(loc)
@@ -837,6 +835,6 @@ class ObjectDetector(object):
             y.difficults = y.difficults[bb_mask]
             # 切り抜き
             rgb = tk.ndimage.crop(rgb, crop_xy[0], crop_xy[1], cropped_wh[0], cropped_wh[1])
-            assert rgb.shape[:2] == cropped_wh[::-1]
+            assert (rgb.shape[:2] == cropped_wh[::-1]).all()
             break
         return rgb

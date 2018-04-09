@@ -16,7 +16,7 @@ RESULT_DIR = BASE_DIR / 'results'
 
 def _main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', help='epoch数。', default=128, type=int)
+    parser.add_argument('--epochs', help='epoch数。', default=300, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     parser.add_argument('--no-lr-decay', help='learning rateを減衰させない。epochs // 2で停止する。', action='store_true', default=False)
     args = parser.parse_args()
@@ -46,8 +46,7 @@ def _run(args):
             logger.info('warm start: %s', warm_path.name)
             break
 
-    sgd_lr = 0.5 / 256 / 3  # 損失関数がconf + loc + iouなのでちょっと調整
-    model.compile(sgd_lr=sgd_lr, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
+    model.compile(sgd_lr=0.5 / 256, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
 
     callbacks = []
     if args.no_lr_decay:
