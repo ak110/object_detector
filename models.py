@@ -559,7 +559,7 @@ class ObjectDetector(object):
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
             x = builder.bn_act(name=f'up{up_index}_mix')(x)
             x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
+            x = builder.dwconv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
             ref[f'out{map_size}'] = x
 
             if self.map_sizes[0] <= map_size:
@@ -637,8 +637,9 @@ class ObjectDetector(object):
         while True:
             down_index += 1
             map_size = builder.shape(x)[1] // 2
-            x = builder.conv2d(256, (3, 3), strides=(2, 2), name=f'down{down_index}_ds')(x)
-            x = builder.conv2d(256, (3, 3), name=f'down{down_index}_conv')(x)
+            x = builder.dwconv2d(256, (2, 2), strides=(2, 2), name=f'down{down_index}_ds')(x)
+            x = builder.conv2d(256, (3, 3), name=f'down{down_index}_conv1')(x)
+            x = builder.dwconv2d(256, (3, 3), name=f'down{down_index}_conv2')(x)
             assert builder.shape(x)[1] == map_size
             ref_list.append(x)
             if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
