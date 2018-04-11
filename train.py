@@ -46,13 +46,14 @@ def _run(args):
             logger.info('warm start: %s', warm_path.name)
             break
 
-    model.compile(sgd_lr=0.5 / 256, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
+    sgd_lr = 0.5 / 256 / 3  # lossが複雑なので微調整
+    model.compile(sgd_lr=sgd_lr, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
 
     callbacks = []
     if args.no_lr_decay:
         args.epochs //= 2
     else:
-        callbacks.append(tk.dl.callbacks.learning_rate())
+        callbacks.append(tk.dl.callbacks.learning_rate(reduce_epoch_rates=(0.5, 0.75, 0.875)))
     callbacks.extend(model.horovod_callbacks())
     if hvd.rank() == 0:
         callbacks.append(tk.dl.callbacks.tsv_logger(RESULT_DIR / 'history.tsv'))

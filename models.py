@@ -541,12 +541,8 @@ class ObjectDetector(object):
         map_size = builder.shape(x)[1]
 
         # center
-        x = builder.conv2d(256, (3, 3), name='center_conv1')(x)
-        x = builder.conv2d(256, (3, 3), name='center_conv2')(x)
-        x = builder.conv2d(256, (3, 3), name='center_conv3')(x)
-        x = keras.layers.AveragePooling2D((map_size, map_size), name='center_ds')(x)
-        x = builder.conv2d(256, (1, 1), name='center_dense')(x)
-        ref[f'out{1}'] = x
+        x = builder.conv2d(32, (1, 1), name='center_conv1')(x)
+        x = builder.conv2d(32, (map_size, map_size), padding='valid', name='center_conv2')(x)
 
         # upsampling
         up_index = 0
@@ -562,7 +558,8 @@ class ObjectDetector(object):
             t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
             x = builder.bn_act(name=f'up{up_index}_mix')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
             ref[f'out{map_size}'] = x
 
             if self.map_sizes[0] <= map_size:
@@ -640,7 +637,7 @@ class ObjectDetector(object):
         while True:
             down_index += 1
             map_size = builder.shape(x)[1] // 2
-            x = builder.conv2d(256, (2, 2), strides=(2, 2), name=f'down{down_index}_ds')(x)
+            x = builder.conv2d(256, (3, 3), strides=(2, 2), name=f'down{down_index}_ds')(x)
             x = builder.conv2d(256, (3, 3), name=f'down{down_index}_conv')(x)
             assert builder.shape(x)[1] == map_size
             ref_list.append(x)
