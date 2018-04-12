@@ -656,7 +656,7 @@ class ObjectDetector(object):
         old_gn, builder.use_gn = builder.use_gn, True
 
         shared_layers = {}
-        shared_layers['pm_conv1'] = builder.conv2d(256, (3, 3), use_bn=False, use_act=False, name='pm_conv1')
+        shared_layers['pm_conv1'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv1')
         shared_layers['pm_conv2_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv2_1')
         shared_layers['pm_conv2_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv2_2')
         shared_layers['pm_conv3_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv3_1')
@@ -670,17 +670,20 @@ class ObjectDetector(object):
                 bias_initializer=tk.dl.losses.od_bias_initializer(1),
                 bias_regularizer=None,
                 activation='sigmoid',
+                use_bias=True,
                 use_bn=False,
                 name=f'pm-{pat_ix}_obj')
             shared_layers[f'pm-{pat_ix}_clf'] = builder.conv2d(
                 self.nb_classes, (1, 1),
                 kernel_initializer='zeros',
                 activation='sigmoid',  # softmaxより速そう (cf. YOLOv3)
+                use_bias=True,
                 use_bn=False,
                 name=f'pm-{pat_ix}_clf')
             shared_layers[f'pm-{pat_ix}_loc'] = builder.conv2d(
                 4, (1, 1),
                 kernel_initializer='zeros',
+                use_bias=False,
                 use_bn=False,
                 use_act=False,
                 name=f'pm-{pat_ix}_loc')
