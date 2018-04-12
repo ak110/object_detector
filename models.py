@@ -171,8 +171,11 @@ class ObjectDetector(object):
         """座標を学習用に変換。"""
         return (bboxes[bb_ix, :] - self.pb_locs[pb_ix, :]) / np.tile(self.pb_sizes[pb_ix, :], 2) / _VAR_LOC
 
-    def decode_locs(self, pred, xp):
+    def decode_locs(self, pred, xp=None):
         """encode_locsの逆変換。xpはnumpy or keras.backend。"""
+        if xp is None:
+            import keras.backend as K
+            xp = K
         decoded = pred * (_VAR_LOC * np.tile(self.pb_sizes, 2)) + self.pb_locs
         return xp.clip(decoded, 0, 1)
 
@@ -532,52 +535,11 @@ class ObjectDetector(object):
     def create_network(self, load_weights=True, for_predict=False):
         """モデルの作成。"""
         import keras
-        import keras.backend as K
         builder = tk.dl.layers.Builder()
 
-        # downsampling (ベースネットワーク)
         x = inputs = keras.layers.Input(self.image_size + (3,))
         x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
-        map_size = builder.shape(x)[1]
-
-        # center
-        x = builder.conv2d(32, (1, 1), name='center_conv1')(x)
-        x = builder.conv2d(32, (map_size, map_size), padding='valid', name='center_conv2')(x)
-
-        # upsampling
-        up_index = 0
-        while True:
-            up_index += 1
-            in_map_size = builder.shape(x)[1]
-            assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
-            up_size = map_size // in_map_size
-            x = keras.layers.Dropout(0.25)(x)
-            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 use_act=False, name=f'up{up_index}_us')(x)
-            t = ref[f'down{map_size}']
-            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
-            x = keras.layers.add([x, t], name=f'up{up_index}_mix')
-            x = builder.bn_act(name=f'up{up_index}_mix')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
-            x = builder.dwconv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
-            ref[f'out{map_size}'] = x
-
-            if self.map_sizes[0] <= map_size:
-                break
-            map_size *= 2
-
-        # prediction module
-        objs, clfs, locs = self._create_pm(builder, ref, lr_multipliers)
-
-        if for_predict:
-            model = self._create_predict_network(inputs, objs, clfs, locs)
-        else:
-            # ラベル側とshapeを合わせるためのダミー
-            dummy_shape = (len(self.pb_locs), 1)
-            dummy = keras.layers.Lambda(K.zeros_like, dummy_shape)(objs)  # objsとちょうどshapeが同じなのでzeros_like。
-            # いったんくっつける (損失関数の中で分割して使う)
-            outputs = keras.layers.concatenate([dummy, objs, clfs, locs], axis=-1, name='outputs')
-            model = keras.models.Model(inputs=inputs, outputs=outputs)
+        model = self._create_detector(builder, inputs, x, ref, lr_multipliers, for_predict)
 
         logger = tk.log.get(__name__)
         logger.info('network depth: %d', tk.dl.models.count_network_depth(model))
@@ -647,6 +609,54 @@ class ObjectDetector(object):
 
         ref = {f'down{builder.shape(x)[1]}': x for x in ref_list}
         return x, ref, lr_multipliers
+
+    @tk.log.trace()
+    def _create_detector(self, builder, inputs, x, ref, lr_multipliers, for_predict):
+        """ネットワークのcenter以降の部分を作る。"""
+        import keras
+        import keras.backend as K
+        map_size = builder.shape(x)[1]
+
+        # center
+        x = builder.conv2d(32, (1, 1), name='center_conv1')(x)
+        x = builder.conv2d(32, (map_size, map_size), padding='valid', name='center_conv2')(x)
+
+        # upsampling
+        up_index = 0
+        while True:
+            up_index += 1
+            in_map_size = builder.shape(x)[1]
+            assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
+            up_size = map_size // in_map_size
+            x = keras.layers.Dropout(0.25)(x)
+            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
+                                 use_act=False, name=f'up{up_index}_us')(x)
+            t = ref[f'down{map_size}']
+            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
+            x = keras.layers.add([x, t], name=f'up{up_index}_mix')
+            x = builder.bn_act(name=f'up{up_index}_mix')(x)
+            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
+            x = builder.dwconv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
+            ref[f'out{map_size}'] = x
+
+            if self.map_sizes[0] <= map_size:
+                break
+            map_size *= 2
+
+        # prediction module
+        objs, clfs, locs = self._create_pm(builder, ref, lr_multipliers)
+
+        if for_predict:
+            model = self._create_predict_network(inputs, objs, clfs, locs)
+        else:
+            # ラベル側とshapeを合わせるためのダミー
+            dummy_shape = (len(self.pb_locs), 1)
+            dummy = keras.layers.Lambda(K.zeros_like, dummy_shape)(objs)  # objsとちょうどshapeが同じなのでzeros_like。
+            # いったんくっつける (損失関数の中で分割して使う)
+            outputs = keras.layers.concatenate([dummy, objs, clfs, locs], axis=-1, name='outputs')
+            model = keras.models.Model(inputs=inputs, outputs=outputs)
+
+        return model
 
     @tk.log.trace()
     def _create_pm(self, builder, ref, lr_multipliers):
@@ -728,24 +738,19 @@ class ObjectDetector(object):
         import keras
         import keras.backend as K
 
-        def _classes(x):
-            return K.argmax(x, axis=-1)
-
         def _conf(x):
             objs = x[0][:, :, 0]
-            confs = K.max(x[1], axis=-1)
+            confs = x[1]
             # objectnessとconfidenceの調和平均をconfidenceということにしてみる
             # conf = 2 / (1 / objs + 1 / confs)
             # → どうも相乗平均の方がmAP高いっぽい？
             conf = K.sqrt(objs * confs)
             return conf * np.expand_dims(self.pb_mask, axis=0)
 
-        def _locs(x):
-            return self.decode_locs(x, K)
-
-        classes = keras.layers.Lambda(_classes, K.int_shape(clfs)[1:-1])(clfs)
-        objconfs = keras.layers.Lambda(_conf, K.int_shape(clfs)[1:-1])([objs, clfs])
-        locs = keras.layers.Lambda(_locs, K.int_shape(locs)[1:])(locs)
+        classes = tk.dl.layers.channel_argmax()()(clfs)
+        confs = tk.dl.layers.channel_max()()(clfs)
+        objconfs = keras.layers.Lambda(_conf, K.int_shape(clfs)[1:-1])([objs, confs])
+        locs = keras.layers.Lambda(self.decode_locs)(locs)
         return keras.models.Model(inputs=inputs, outputs=[classes, objconfs, locs])
 
     def create_generator(self, encode_truth=True):
