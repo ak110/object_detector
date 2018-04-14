@@ -4,7 +4,7 @@
 
 ベースネットワーク(VGG16/ResNet50など) + FPN風
 
-参考にしたもの: [DSSD](https://arxiv.org/abs/1701.06659)、[DSOD](https://arxiv.org/abs/1708.01241)、[FPN](https://arxiv.org/abs/1612.03144)など。
+参考にしたもの: [DSSD](https://arxiv.org/abs/1701.06659)、[DSOD](https://arxiv.org/abs/1708.01241)、[FPN](https://arxiv.org/abs/1612.03144)、[YOLOv3](https://pjreddie.com/media/files/papers/YOLOv3.pdf)など。
 
 ## 活性化関数
 
@@ -18,7 +18,7 @@
 
 ## Prior box
 
-使用するfeature mapは、40x40 ～ 5x5の4つ + 1x1など。
+使用するfeature mapは、40x40 ～ 10x10の3つなど。
 
 feature map毎に8種類のprior boxを出力する。
 
@@ -26,9 +26,17 @@ feature map毎に8種類のprior boxを出力する。
 IoUは重心が一致している想定で算出する。
 ([YOLOv2](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
 
-## 損失関数：分類
+## 損失関数：Objectness score
 
-[Focal loss](https://arxiv.org/abs/1708.02002)
+YOLOv3風に物体か否かを2クラス分類。
+
+cross entropyではなく[Focal loss](https://arxiv.org/abs/1708.02002)を使用。
+
+## 損失関数：classification
+
+`binary crossentropy`
+
+YOLOv3風に。(普通の分類では大差無いと思う)
 
 ## 損失関数：bounding box
 
@@ -36,18 +44,11 @@ IoUは重心が一致している想定で算出する。
 
 `x, y, w, h` ではなく `x1, y1, x2, y2` でやっている。(怪)
 
-## 損失関数：IoU
+## confidence
 
-`binary crossentropy`
+NMSするときとかに使うconfidenceは、Objectness scoreとclassificationの幾何平均にしている。
 
-予測結果のboxと答えのboxのIoUを予測(回帰)して、分類のconfidenceと合わせて使用するもの。
-([自分で考案したつもりがYOLOv1が既にやっていた](https://twitter.com/ak11/status/917901136782278656)。)
-
-値の回帰でbinary crossentropyを使うのは理屈としては変だが、
-経験上うまくいくのでやってしまっている。
-(たぶん勾配が答えと予測値の差になるから)
-
-合わせ方は加算（相加平均）、乗算（相乗平均）、調和平均とか試したけど乗算が僅差で良かったので採用。(怪)
+(調和平均が正しいと思うのだけど調和平均より算術平均より幾何平均が良さそう。)
 
 ## DataAugmentation
 
@@ -69,16 +70,14 @@ APも曲線をちゃんと積分するか0.1刻みに見るかがあって、PAS
 
 ### NMS(non-maximum suppression)
 
-predict結果のうちconfidenceの高いものについて、
-それら同士で同じクラスで重なっているものは一番confidenceの高いものを採用するという話。
+predict結果のうちconfidenceの高いものについて、それら同士で同じクラスで重なっているものは一番confidenceの高いものを採用するという話。
 
 論文上の説明がさらっとしてて最初は見落としていた。
 
 ### 学習率
 
 [重みを共有しているところがあると学習率をあまり大きく出来なさそう](https://twitter.com/ak11/status/916282847047983104)という話があり、
-学習の進みが遅かったりnanが出たりと困っていたけど、
-最終的にレイヤー毎に学習率を変えるようにした。
+学習の進みが遅かったりnanが出たりと困っていたけど、最終的にレイヤー毎に学習率を変えるようにした。
 
 共有しているレイヤーは、学習率を `1/共有回数` 倍に。あとついでにベースネットワーク部分は `1/100` 倍の学習率にした。
 (最初はfreezeして追加部分だけ学習したほうが早いが、コードが増えたりfreeze解除時にメモリ不足で落ちると悲しいので。)
