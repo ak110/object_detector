@@ -620,6 +620,7 @@ class ObjectDetector(object):
         # center
         x = builder.conv2d(32, (1, 1), name='center_conv1')(x)
         x = builder.conv2d(32, (map_size, map_size), padding='valid', name='center_conv2')(x)
+        x = builder.conv2d(32, (1, 1), name='center_conv3')(x)
 
         # upsampling
         up_index = 0
@@ -629,10 +630,9 @@ class ObjectDetector(object):
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
             x = keras.layers.Dropout(0.25)(x)
-            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid',
-                                 use_act=False, name=f'up{up_index}_us')(x)
-            t = ref[f'down{map_size}']
-            t = builder.conv2d(256, (1, 1), use_act=False, name=f'up{up_index}_lt')(t)
+            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid', name=f'up{up_index}_us')(x)
+            x = builder.dwconv2d(256, (3, 3), use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_up')(x)
+            t = builder.conv2d(256, (1, 1), use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_lt')(ref[f'down{map_size}'])
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
             x = builder.bn_act(name=f'up{up_index}_mix')(x)
             x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
