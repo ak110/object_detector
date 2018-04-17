@@ -553,16 +553,16 @@ class ObjectDetector(object):
         basenet = None
         ref_list = []
         if self.base_network == 'custom':
-            x = builder.conv2d(32, (7, 7), strides=(2, 2), name='stage0_ds')(x)
+            x = builder.conv2d(32, 7, strides=2, name='stage0_ds')(x)
             x = keras.layers.MaxPooling2D(name='stage1_ds')(x)
-            x = builder.conv2d(64, (3, 3), name='stage2_conv1')(x)
-            x = builder.conv2d(64, (3, 3), name='stage2_conv2')(x)
+            x = builder.conv2d(64, 3, name='stage2_conv1')(x)
+            x = builder.conv2d(64, 3, name='stage2_conv2')(x)
             x = keras.layers.MaxPooling2D(name='stage2_ds')(x)
-            x = builder.conv2d(128, (3, 3), name='stage3_conv1')(x)
-            x = builder.conv2d(128, (3, 3), name='stage3_conv2')(x)
+            x = builder.conv2d(128, 3, name='stage3_conv1')(x)
+            x = builder.conv2d(128, 3, name='stage3_conv2')(x)
             x = keras.layers.MaxPooling2D(name='stage3_ds')(x)
-            x = builder.conv2d(256, (3, 3), name='stage4_conv1')(x)
-            x = builder.conv2d(256, (3, 3), name='stage4_conv2')(x)
+            x = builder.conv2d(256, 3, name='stage4_conv1')(x)
+            x = builder.conv2d(256, 3, name='stage4_conv2')(x)
             ref_list.append(x)
         elif self.base_network == 'vgg16':
             basenet = keras.applications.VGG16(include_top=False, input_tensor=x, weights='imagenet' if load_weights else None)
@@ -599,9 +599,9 @@ class ObjectDetector(object):
         while True:
             down_index += 1
             map_size = builder.shape(x)[1] // 2
-            x = builder.dwconv2d(256, (2, 2), strides=(2, 2), name=f'down{down_index}_ds')(x)
-            x = builder.conv2d(256, (3, 3), name=f'down{down_index}_conv1')(x)
-            x = builder.dwconv2d(256, (3, 3), name=f'down{down_index}_conv2')(x)
+            x = builder.dwconv2d(256, 2, strides=2, name=f'down{down_index}_ds')(x)
+            x = builder.conv2d(256, 3, name=f'down{down_index}_conv1')(x)
+            x = builder.dwconv2d(256, 3, name=f'down{down_index}_conv2')(x)
             assert builder.shape(x)[1] == map_size
             ref_list.append(x)
             if map_size <= 4 or map_size % 2 != 0:  # 充分小さくなるか奇数になったら終了
@@ -630,13 +630,13 @@ class ObjectDetector(object):
             assert map_size % in_map_size == 0, f'map size error: {in_map_size} -> {map_size}'
             up_size = map_size // in_map_size
             x = keras.layers.Dropout(0.25)(x)
-            x = builder.conv2dtr(256, (up_size, up_size), strides=(up_size, up_size), padding='valid', name=f'up{up_index}_us')(x)
-            x = builder.dwconv2d(256, (3, 3), use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_up')(x)
-            t = builder.conv2d(256, (1, 1), use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_lt')(ref[f'down{map_size}'])
+            x = builder.conv2dtr(256, up_size, strides=up_size, padding='valid', name=f'up{up_index}_us')(x)
+            x = builder.dwconv2d(256, 3, use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_up')(x)
+            t = builder.conv2d(256, 1, use_act=False, bn_kwargs={'center': False}, name=f'up{up_index}_lt')(ref[f'down{map_size}'])
             x = keras.layers.add([x, t], name=f'up{up_index}_mix')
             x = builder.bn_act(name=f'up{up_index}_mix')(x)
-            x = builder.conv2d(256, (3, 3), name=f'up{up_index}_conv1')(x)
-            x = builder.dwconv2d(256, (3, 3), name=f'up{up_index}_conv2')(x)
+            x = builder.conv2d(256, 3, name=f'up{up_index}_conv1')(x)
+            x = builder.dwconv2d(256, 3, name=f'up{up_index}_conv2')(x)
             ref[f'out{map_size}'] = x
 
             if self.map_sizes[0] <= map_size:
@@ -666,11 +666,11 @@ class ObjectDetector(object):
         old_gn, builder.use_gn = builder.use_gn, True
 
         shared_layers = {}
-        shared_layers['pm_conv1'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv1')
-        shared_layers['pm_conv2_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv2_1')
-        shared_layers['pm_conv2_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv2_2')
-        shared_layers['pm_conv3_1'] = builder.conv2d(256, (3, 3), use_act=True, name='pm_conv3_1')
-        shared_layers['pm_conv3_2'] = builder.conv2d(256, (3, 3), use_act=False, name='pm_conv3_2')
+        shared_layers['pm_conv1'] = builder.conv2d(256, 3, use_act=False, name='pm_conv1')
+        shared_layers['pm_conv2_1'] = builder.conv2d(256, 3, use_act=True, name='pm_conv2_1')
+        shared_layers['pm_conv2_2'] = builder.conv2d(256, 3, use_act=False, name='pm_conv2_2')
+        shared_layers['pm_conv3_1'] = builder.conv2d(256, 3, use_act=True, name='pm_conv3_1')
+        shared_layers['pm_conv3_2'] = builder.conv2d(256, 3, use_act=False, name='pm_conv3_2')
         shared_layers['pm_bn'] = builder.bn(name='pm_bn')
         shared_layers['pm_act'] = builder.act(name='pm_act')
         for pat_ix in range(len(self.pb_size_patterns)):
