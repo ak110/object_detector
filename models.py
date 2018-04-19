@@ -10,6 +10,7 @@ import pytoolkit as tk
 
 _VAR_LOC = 0.2  # SSD風(?)適当スケーリング
 _VAR_SIZE = 0.2  # SSD風適当スケーリング
+_PRETRAIN_SIZE = (299, 299)
 
 
 class ObjectDetector(object):
@@ -518,7 +519,7 @@ class ObjectDetector(object):
         """事前学習用モデルの作成。"""
         import keras
         builder = tk.dl.layers.Builder()
-        x = inputs = keras.layers.Input((320, 320, 3,))
+        x = inputs = keras.layers.Input(_PRETRAIN_SIZE + (3,))
         x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
         assert len(lr_multipliers) == 0
         x = keras.layers.GlobalAveragePooling2D()(x)
@@ -754,16 +755,11 @@ class ObjectDetector(object):
     def create_pretrain_generator(self):
         """ImageDataGeneratorを作って返す。"""
         gen = tk.image.ImageDataGenerator()
-        gen.add(tk.image.Resize(self.image_size))
-        gen.add(tk.image.RandomPadding(probability=1))
-        gen.add(tk.image.RandomRotate(probability=0.5))
-        gen.add(tk.image.RandomCrop(probability=1))
-        gen.add(tk.image.Resize(self.image_size))
+        gen.add(tk.image.Resize(_PRETRAIN_SIZE))
         gen.add(tk.image.RandomFlipLR(probability=0.5))
-        gen.add(tk.image.RandomColorAugmentors(probability=0.5))
         gen.add(tk.image.RandomErasing(probability=0.5))
-        gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
         gen.add(tk.image.RotationsLearning())
+        gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
         return gen
 
     def create_generator(self, encode_truth=True):

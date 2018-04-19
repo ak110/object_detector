@@ -19,8 +19,8 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 def _main():
     hvd.init()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', help='epoch数。', default=300, type=int)
-    parser.add_argument('--batch-size', help='バッチサイズ。', default=32, type=int)
+    parser.add_argument('--epochs', help='epoch数。', default=100, type=int)
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=64, type=int)
     args = parser.parse_args()
     tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if hvd.rank() == 0 else None)
     with tk.dl.session(gpu_options={'visible_device_list': str(hvd.local_rank())}):

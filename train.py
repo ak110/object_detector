@@ -18,7 +18,6 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', help='epoch数。', default=300, type=int)
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
-    parser.add_argument('--no-lr-decay', help='learning rateを減衰させない。epochs // 2で停止する。', action='store_true', default=False)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
         tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if hvd.rank() == 0 else None)
@@ -51,10 +50,7 @@ def _run(args):
     model.compile(sgd_lr=sgd_lr, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
 
     callbacks = []
-    if args.no_lr_decay:
-        args.epochs //= 2
-    else:
-        callbacks.append(tk.dl.callbacks.learning_rate(reduce_epoch_rates=(0.5, 0.75, 0.875)))
+    callbacks.append(tk.dl.callbacks.learning_rate(reduce_epoch_rates=(0.5, 0.75, 0.875)))
     callbacks.extend(model.horovod_callbacks())
     if hvd.rank() == 0:
         callbacks.append(tk.dl.callbacks.tsv_logger(RESULT_DIR / 'history.tsv'))
