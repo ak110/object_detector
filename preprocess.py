@@ -86,15 +86,15 @@ def load_data_csv(data_dir: pathlib.Path):
     class_names = np.unique(class_names).tolist()
     class_name_to_id = {class_name: i for i, class_name in enumerate(class_names)}
 
-    y_train = _load_csv_annotations(csv_dir, 'train', image_dir, class_name_to_id)
-    y_test = _load_csv_annotations(csv_dir, 'test', image_dir, class_name_to_id)
+    y_train = _load_csv_annotations(csv_dir / 'train.csv', image_dir, class_name_to_id)
+    y_test = _load_csv_annotations(csv_dir / 'test.csv', image_dir, class_name_to_id)
 
     return y_train, y_test, class_names
 
 
-def _load_csv_annotations(csv_dir, data_type, image_dir, class_name_to_id):
+def _load_csv_annotations(csv_path, image_dir, class_name_to_id):
     import pandas as pd
-    df = pd.read_csv(str(csv_dir / f'{data_type}.csv'))
+    df = pd.read_csv(str(csv_path))
     # クラス名の一覧
     # ファイル名の一覧
     X = np.unique(df['filename'].values)

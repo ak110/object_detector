@@ -5,20 +5,21 @@
 ## PASCAL VOC 2007+2012
 
     ./preprocess.py
-    mpirun -np 4 -H localhost:4 -bind-to none -map-by slot -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH ./train.py
+    mpirun -np 4 -H localhost:4 ./train.py
     ./validate.py
     ./report.py
 
 ## custom network: VOC pretrain + CSV
 
     ./preprocess.py --data-type=voc --base-network=custom --input-size=773 --map-sizes 48 24 12
-    mpirun -np 4 -H localhost:4 -bind-to none -map-by slot -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH ./train.py --batch-size=4 --no-lr-decay
+    mpirun -np 4 -H localhost:4 ./pretrain.py
+    mpirun -np 4 -H localhost:4 ./train.py --batch-size=8
     ./validate.py
     ./report.py
     mv results/model.h5 results/model.base.h5
 
     ./preprocess.py --data-type=csv --base-network=custom --input-size=773 --map-sizes 48 24 12
-    mpirun -np 4 -H localhost:4 -bind-to none -map-by slot -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH ./train.py --batch-size=4
+    mpirun -np 4 -H localhost:4 ./train.py --batch-size=8
     ./validate.py
     ./report.py
 
