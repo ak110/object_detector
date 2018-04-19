@@ -34,12 +34,8 @@ def _run(args):
     od = tk.dl.od.ObjectDetector.load(RESULT_DIR / 'model.pkl')
     model = od.create_model('predict', args.batch_size, weights=RESULT_DIR / 'model.h5')
 
-    # マルチGPU化
-    tk.log.get(__name__).info('gpu count = %d', tk.get_gpu_count())
-    model, batch_size = tk.dl.models.multi_gpu_model(model, args.batch_size)
-
     # 予測
-    pred_classes_list, pred_confs_list, pred_locs_list = od.predict(model, X_test, batch_size)
+    pred_classes_list, pred_confs_list, pred_locs_list = od.predict(model, X_test)
 
     # mAP
     gt_classes_list = np.array([y.classes for y in y_test])
