@@ -514,16 +514,15 @@ class ObjectDetector(object):
             return tk.image.preprocess_input_abs1
 
     @tk.log.trace()
-    def create_pretrain_network(self, image_size):
+    def create_pretrain_network(self):
         """事前学習用モデルの作成。"""
         import keras
         builder = tk.dl.layers.Builder()
-
-        x = inputs = keras.layers.Input(image_size + (3,))
+        x = inputs = keras.layers.Input((320, 320, 3,))
         x, _, lr_multipliers = self._create_basenet(builder, x, load_weights=True)
-        assert builder.shape(x)[1] == 3
         assert len(lr_multipliers) == 0
-        x = builder.conv2d(2048, (1, 1), use_bn=False, use_act=False, name='tail_for_xception')(x)
+        x = keras.layers.GlobalAveragePooling2D()(x)
+        x = builder.dense(4, activation='softmax', name='predictions')(x)
         model = keras.models.Model(inputs=inputs, outputs=x)
 
         logger = tk.log.get(__name__)
@@ -536,7 +535,6 @@ class ObjectDetector(object):
         """モデルの作成。"""
         import keras
         builder = tk.dl.layers.Builder()
-
         x = inputs = keras.layers.Input(self.image_size + (3,))
         x, ref, lr_multipliers = self._create_basenet(builder, x, load_weights)
         model = self._create_detector(builder, inputs, x, ref, lr_multipliers, for_predict)
@@ -752,6 +750,21 @@ class ObjectDetector(object):
         objconfs = keras.layers.Lambda(_conf, K.int_shape(clfs)[1:-1])([objs, confs])
         locs = keras.layers.Lambda(self.decode_locs)(locs)
         return keras.models.Model(inputs=inputs, outputs=[classes, objconfs, locs])
+
+    def create_pretrain_generator(self):
+        """ImageDataGeneratorを作って返す。"""
+        gen = tk.image.ImageDataGenerator()
+        gen.add(tk.image.Resize(self.image_size))
+        gen.add(tk.image.RandomPadding(probability=1))
+        gen.add(tk.image.RandomRotate(probability=0.5))
+        gen.add(tk.image.RandomCrop(probability=1))
+        gen.add(tk.image.Resize(self.image_size))
+        gen.add(tk.image.RandomFlipLR(probability=0.5))
+        gen.add(tk.image.RandomColorAugmentors(probability=0.5))
+        gen.add(tk.image.RandomErasing(probability=0.5))
+        gen.add(tk.image.ProcessInput(self.get_preprocess_input(), batch_axis=True))
+        gen.add(tk.image.RotationsLearning())
+        return gen
 
     def create_generator(self, encode_truth=True):
         """ImageDataGeneratorを作って返す。"""

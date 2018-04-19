@@ -37,7 +37,8 @@ def _run(args):
     # モデルの読み込み
     od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
     model, lr_multipliers = od.create_network()
-    model = tk.dl.models.Model(model, od.create_generator(), args.batch_size, use_horovod=True)
+    gen = od.create_generator()
+    model = tk.dl.models.Model(model, gen, args.batch_size, use_horovod=True)
 
     # 学習済み重みの読み込み
     for warm_path in (RESULT_DIR / 'model.base.h5', RESULT_DIR / 'pretrain.model.h5'):
