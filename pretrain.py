@@ -3,11 +3,9 @@
 import argparse
 import pathlib
 
-import horovod.keras as hvd
 import numpy as np
 import sklearn.externals.joblib as joblib
 
-import models
 import pytoolkit as tk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -22,29 +20,25 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=64, type=int)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if hvd.rank() == 0 else None)
+        tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if tk.dl.hvd.is_master() else None)
         _run(args)
 
 
 @tk.log.trace()
 def _run(args):
-    # モデルの読み込み
-    od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-
     # データの読み込み
     y_train, y_test, _ = joblib.load(DATA_DIR / 'train_data.pkl')
     X_train = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_train)
     X_test = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_test)
 
-    model = od.create_pretrain_network()
-    gen = od.create_pretrain_generator()
-    model = tk.dl.models.Model(model, gen, args.batch_size, use_horovod=True)
-    model.compile(sgd_lr=0.5 / 256, loss='categorical_crossentropy', metrics=['acc'])
+    # モデルの読み込み
+    od = tk.dl.od.ObjectDetector.load(RESULT_DIR / 'model.pkl')
+    model = od.create_model('pretrain', args.batch_size, weights='imagenet')
 
     callbacks = []
     callbacks.append(tk.dl.callbacks.learning_rate())
     callbacks.extend(model.horovod_callbacks())
-    if hvd.rank() == 0:
+    if tk.dl.hvd.is_master():
         callbacks.append(tk.dl.callbacks.tsv_logger(RESULT_DIR / 'pretrain.history.tsv'))
         callbacks.append(tk.dl.callbacks.epoch_logger())
     callbacks.append(tk.dl.callbacks.freeze_bn(0.95))

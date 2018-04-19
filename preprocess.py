@@ -6,7 +6,6 @@ import pathlib
 import numpy as np
 import sklearn.externals.joblib as joblib
 
-import models
 import pytoolkit as tk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -29,13 +28,13 @@ def _main():
 @tk.log.trace()
 def _run(args):
     logger = tk.log.get(__name__)
-    # データを読んでresults/配下にpklで保存し直す (学習時の高速化のため)
+    # データを読んでresults/配下にpklで保存し直す (高速化のため)
     logger.info('データの読み込み: data-dir=%s data-type=%s', DATA_DIR, args.data_type)
     (_, y_train), (X_test, y_test), class_names = load_data(DATA_DIR, args.data_type)
     joblib.dump((y_train, y_test, class_names), DATA_DIR / 'train_data.pkl')
 
     # 訓練データからパラメータを適当に決める
-    od = models.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
+    od = tk.dl.od.ObjectDetector.create(args.base_network, args.input_size, args.map_sizes, len(class_names), y_train)
     od.save(RESULT_DIR / 'model.pkl')
     od.summary()
     od.check_prior_boxes(y_test, class_names)

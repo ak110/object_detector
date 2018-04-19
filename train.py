@@ -3,10 +3,8 @@
 import argparse
 import pathlib
 
-import horovod.keras as hvd
 import sklearn.externals.joblib as joblib
 
-import models
 import pytoolkit as tk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -20,39 +18,32 @@ def _main():
     parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if hvd.rank() == 0 else None)
+        tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if tk.dl.hvd.is_master() else None)
         _run(args)
 
 
 @tk.log.trace()
 def _run(args):
-    logger = tk.log.get(__name__)
-
     # データの読み込み
     y_train, y_test, _ = joblib.load(DATA_DIR / 'train_data.pkl')
     X_train = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_train)
     X_test = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_test)
 
-    # モデルの読み込み
-    od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    model, lr_multipliers = od.create_network()
-    gen = od.create_generator()
-    model = tk.dl.models.Model(model, gen, args.batch_size, use_horovod=True)
-
-    # 学習済み重みの読み込み
+    # 読み込む重みの決定
+    weights = 'imagenet'
     for warm_path in (RESULT_DIR / 'model.base.h5', RESULT_DIR / 'pretrain.model.h5'):
         if warm_path.is_file():
-            model.load_weights(warm_path)
-            logger.info('warm start: %s', warm_path.name)
+            weights = weights
             break
 
-    sgd_lr = 0.5 / 256 / 3  # lossが複雑なので微調整
-    model.compile(sgd_lr=sgd_lr, lr_multipliers=lr_multipliers, loss=od.loss, metrics=od.metrics)
+    # モデルの読み込み
+    od = tk.dl.od.ObjectDetector.load(RESULT_DIR / 'model.pkl')
+    model = od.create_model('train', args.batch_size, weights)
 
     callbacks = []
     callbacks.append(tk.dl.callbacks.learning_rate(reduce_epoch_rates=(0.5, 0.75, 0.875)))
     callbacks.extend(model.horovod_callbacks())
-    if hvd.rank() == 0:
+    if tk.dl.hvd.is_master():
         callbacks.append(tk.dl.callbacks.tsv_logger(RESULT_DIR / 'history.tsv'))
         callbacks.append(tk.dl.callbacks.epoch_logger())
     callbacks.append(tk.dl.callbacks.freeze_bn(0.95))

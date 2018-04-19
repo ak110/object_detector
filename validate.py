@@ -6,7 +6,6 @@ import pathlib
 import numpy as np
 import sklearn.externals.joblib as joblib
 
-import models
 import pytoolkit as tk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -32,9 +31,8 @@ def _run(args):
     X_test = tk.ml.ObjectsAnnotation.get_path_list(DATA_DIR, y_test)
 
     # モデルの読み込み
-    od = models.ObjectDetector.load(RESULT_DIR / 'model.pkl')
-    model, _ = od.create_network(load_weights=False, for_predict=True)
-    model.load_weights(str(RESULT_DIR / 'model.h5'), by_name=True)
+    od = tk.dl.od.ObjectDetector.load(RESULT_DIR / 'model.pkl')
+    model = od.create_model('predict', args.batch_size, weights=RESULT_DIR / 'model.h5')
 
     # マルチGPU化
     tk.log.get(__name__).info('gpu count = %d', tk.get_gpu_count())

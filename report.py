@@ -5,7 +5,6 @@ import pathlib
 
 import pandas as pd
 
-import models
 import pytoolkit as tk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -28,7 +27,7 @@ def _main():
 
 
 def _report_net(args):
-    od = models.ObjectDetector.load(args.result_dir / 'model.pkl')
+    od = tk.dl.od.ObjectDetector.load(args.result_dir / 'model.pkl')
 
     import keras
     with tk.dl.session():
