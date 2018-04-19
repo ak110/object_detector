@@ -37,21 +37,21 @@ def _report_net(args):
             with (args.result_dir / 'network.txt').open('w') as f:
                 model.summary(print_fn=lambda x: f.write(x + '\n'))
 
-        with tk.log.trace_scope('model.params.png'):
-            tk.dl.models.plot_model_params(model, args.result_dir / 'model.params.png')
+        with tk.log.trace_scope('model.params.svg'):
+            tk.dl.models.plot_model_params(model, args.result_dir / 'model.params.svg')
 
-        with tk.log.trace_scope('model.png'):
+        with tk.log.trace_scope('model.svg'):
             try:
-                keras.utils.plot_model(model, str(args.result_dir / 'model.png'), show_shapes=False)
+                keras.utils.plot_model(model, str(args.result_dir / 'model.svg'), show_shapes=False)
             except BaseException:
                 tk.log.get(__name__).warning('keras.utils.plot_model失敗', exc_info=True)
 
 
 def _report_history(args):
-    with tk.log.trace_scope('history.loss.png'):
+    with tk.log.trace_scope('history.loss.svg'):
         df = pd.read_csv(str(args.result_dir / 'history.tsv'), sep='\t')
         ax = df[['loss', 'val_loss']].plot()
-        tk.draw.save(ax, args.result_dir / 'history.loss.png')
+        tk.draw.save(ax, args.result_dir / 'history.loss.svg')
         tk.draw.close(ax)
 
 
