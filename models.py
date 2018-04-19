@@ -804,10 +804,10 @@ class ObjectDetector(object):
                 continue
             y.bboxes = bboxes
             # 先に縮小
-            new_size = np.round(old_size * self.image_size / padded_size).astype(int)
+            new_size = np.floor(old_size * self.image_size / padded_size).astype(int)
             rgb = tk.ndimage.resize(rgb, new_size[0], new_size[1], padding=None)
             # パディング
-            paste_lr = np.round(paste_xy * self.image_size / padded_size).astype(int)
+            paste_lr = np.floor(paste_xy * self.image_size / padded_size).astype(int)
             paste_tb = self.image_size - (paste_lr + new_size)
             padding = rand.choice(('edge', 'zero', 'one', 'rand'))
             rgb = tk.ndimage.pad_ltrb(rgb, paste_lr[0], paste_lr[1], paste_tb[0], paste_tb[1], padding, rand)
