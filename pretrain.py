@@ -17,7 +17,7 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', help='epoch数。', default=100, type=int)
-    parser.add_argument('--batch-size', help='バッチサイズ。', default=64, type=int)
+    parser.add_argument('--batch-size', help='バッチサイズ。', default=16, type=int)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
         tk.log.init(RESULT_DIR / (pathlib.Path(__file__).stem + '.log') if tk.dl.hvd.is_master() else None)
