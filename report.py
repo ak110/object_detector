@@ -31,7 +31,7 @@ def _report_net(args):
 
     import keras
     with tk.dl.session():
-        model, _ = od.create_network()
+        model = od.create_model('predict', batch_size=16, multi_gpu_predict=False).model
 
         with tk.log.trace_scope('network.txt'):
             with (args.result_dir / 'network.txt').open('w') as f:
