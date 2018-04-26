@@ -2,8 +2,6 @@
 """Generatorのお試しコード。"""
 import pathlib
 
-import numpy as np
-
 import pytoolkit as tk
 
 
@@ -19,14 +17,12 @@ def _main():
     y_test = y_test[:1]
     X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
 
-    od = tk.dl.od.ObjectDetector('xception', input_size=512, map_sizes=[40, 20, 10], nb_classes=100, mean_objets=0, pb_size_patterns=np.array([[1.5, 0.5]]))
-    gen = od.create_generator(encode_truth=False)
+    gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None)
+    gen.add(tk.image.RandomFlipTB(probability=0.5))  # TODO: 仮
+    gen.add(tk.image.RandomRotate90(probability=1))  # TODO: 仮
     for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), gen.flow(X_test, y_test, data_augmentation=True)):
-        for X, y in zip(X_batch, y_batch):
-            img = tk.image.unpreprocess_input_abs1(X)
-            tk.ml.plot_objects(
-                img, save_dir / f'{i}.png',
-                y.classes, None, y.bboxes, class_names)
+        for rgb, y in zip(X_batch, y_batch):
+            tk.ml.plot_objects(rgb, save_dir / f'{i}.jpg', y.classes, None, y.bboxes, class_names)
 
 
 if __name__ == '__main__':
