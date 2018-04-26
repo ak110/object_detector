@@ -29,7 +29,7 @@ def _run():
 
     # モデルの読み込み
     od = tk.dl.od.ObjectDetector.load(_RESULTS_DIR / 'model.json')
-    od.load_weights(_RESULTS_DIR / 'model.h5', batch_size=_BATCH_SIZE)
+    od.load_weights(_RESULTS_DIR / 'model.h5', batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
 
     # 予測
     pred_classes_list, pred_confs_list, pred_locs_list = od.predict(X_test)
