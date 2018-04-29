@@ -13,9 +13,8 @@ def _main():
 
     class_names = ['bg'] + tk.ml.VOC_CLASS_NAMES
     class_name_to_id = {n: i for i, n in enumerate(class_names)}
-    y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(data_dir, class_name_to_id)
-    y_test = y_test[:1]
-    X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
+    X_test, y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(data_dir, class_name_to_id)
+    X_test, y_test = X_test[:1], y_test[:1]
 
     gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None,
                                            flip_h=True, flip_v=True, rotate90=True)

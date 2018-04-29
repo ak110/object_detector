@@ -19,8 +19,7 @@ def _main():
 @tk.log.trace()
 def _run():
     # データの読み込み
-    y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
-    X_test = tk.ml.ObjectsAnnotation.get_path_list(_DATA_DIR, y_test)
+    X_test, y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
     class_names = tk.ml.VOC_CLASS_NAMES
 
     # モデルの読み込み

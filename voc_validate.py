@@ -21,8 +21,7 @@ def _run():
     logger = tk.log.get(__name__)
 
     # データの読み込み
-    y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
-    X_test = tk.ml.ObjectsAnnotation.get_path_list(_DATA_DIR, y_test)
+    X_test, y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
 
     # モデルの読み込み
     od = tk.dl.od.ObjectDetector.load(_RESULTS_DIR / 'model.json')

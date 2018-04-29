@@ -25,10 +25,8 @@ def _main():
 @tk.log.trace()
 def _run():
     # データの読み込み
-    y_train = tk.ml.ObjectsAnnotation.load_voc_0712_trainval(_DATA_DIR, without_difficult=True)
-    y_val = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
-    X_train = tk.ml.ObjectsAnnotation.get_path_list(_DATA_DIR, y_train)
-    X_val = tk.ml.ObjectsAnnotation.get_path_list(_DATA_DIR, y_val)
+    X_train, y_train = tk.ml.ObjectsAnnotation.load_voc_0712_trainval(_DATA_DIR, without_difficult=True)
+    X_val, y_val = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
     num_classes = len(tk.ml.VOC_CLASS_NAMES)
 
     # 重みがあれば読み込む
