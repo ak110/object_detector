@@ -28,21 +28,19 @@ cross entropyではなく[Focal loss](https://arxiv.org/abs/1708.02002)を使用
 
 ## 損失関数：classification
 
-`binary crossentropy`
+普通に `softmax` + `categorical crossentropy` 。
 
-YOLOv3風に。(普通の分類では大差無いと思う)
+YOLOv3の `sigmoid` + `binary crossentropy` はクラス数の増減で正負のバランスが変わってしまうのが気になるのでやめた。
 
 ## 損失関数：bounding box
 
-`L1-smooth loss`
+普通に `L1-smooth loss` 。
 
 `x, y, w, h` ではなく `x1, y1, x2, y2` でやっている。(怪)
 
 ## confidence
 
-NMSするときとかに使うconfidenceは、Objectness scoreとclassificationの幾何平均にしている。
-
-(調和平均が正しいと思うのだけど調和平均より算術平均より幾何平均が良さそう。)
+NMSするときとかに使うconfidenceは、Objectness scoreとclassificationの重み付き平均(前者重視)にしている。
 
 ## DataAugmentation
 
@@ -58,7 +56,7 @@ Random Erasingは、あまりbounding boxを隠しすぎないように色々手
 
 計算方法の情報が見つからなくて苦労した。PASCAL VOCのDevKitのサンプルコードを読み解くくらい？
 
-[クックパッドコンペ](https://deepanalytics.jp/contents/cookpad_dtc_tutorial)では画像毎の平均だったけど、一般的には(?)各クラスのAPの平均っぽい。
+[クックパッドコンペ](https://signate.jp/competitions/31#evaluation)では画像毎の平均だったけど、一般的には(?)各クラスのAPの平均っぽい。
 
 APも曲線をちゃんと積分するか0.1刻みに見るかがあって、PASCAL VOC 2007は後者っぽい。
 
