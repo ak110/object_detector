@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Generatorのお試しコード。"""
 import pathlib
 
@@ -17,12 +17,12 @@ def _main():
     y_test = y_test[:1]
     X_test = tk.ml.ObjectsAnnotation.get_path_list(data_dir, y_test)
 
-    gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None)
-    gen.add(tk.image.RandomFlipTB(probability=0.5))  # TODO: 仮
-    gen.add(tk.image.RandomRotate90(probability=1))  # TODO: 仮
+    gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None,
+                                           flip_h=True, flip_v=True, rotate90=True)
     for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), gen.flow(X_test, y_test, data_augmentation=True)):
         for rgb, y in zip(X_batch, y_batch):
-            tk.ml.plot_objects(rgb, save_dir / f'{i}.jpg', y.classes, None, y.bboxes, class_names)
+            img = tk.ml.plot_objects(rgb, y.classes, None, y.bboxes, class_names)
+            tk.ndimage.save(save_dir / f'{i}.jpg', img)
 
 
 if __name__ == '__main__':
