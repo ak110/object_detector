@@ -8,6 +8,7 @@ _BASE_DIR = pathlib.Path(__file__).resolve().parent
 _DATA_DIR = _BASE_DIR / 'data'
 _RESULTS_DIR = _BASE_DIR / 'results'
 _BATCH_SIZE = 16
+_PRETRAINED = False
 
 
 def _main():
@@ -24,8 +25,11 @@ def _run():
     X_test, y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(_DATA_DIR)
 
     # モデルの読み込み
-    od = tk.dl.od.ObjectDetector.load(_RESULTS_DIR / 'model.json')
-    od.load_weights(_RESULTS_DIR / 'model.h5', batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
+    if _PRETRAINED:
+        od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
+    else:
+        od = tk.dl.od.ObjectDetector.load(_RESULTS_DIR / 'model.json')
+        od.load_weights(_RESULTS_DIR / 'model.h5', batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
 
     # 予測
     pred_test = od.predict(X_test)
