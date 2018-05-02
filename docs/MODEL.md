@@ -4,7 +4,13 @@
 
 ベースネットワーク(VGG16/ResNet50など) + FPN風
 
-参考にしたもの: [DSSD](https://arxiv.org/abs/1701.06659)、[DSOD](https://arxiv.org/abs/1708.01241)、[FPN](https://arxiv.org/abs/1612.03144)、[YOLOv3](https://pjreddie.com/media/files/papers/YOLOv3.pdf)など。
+参考にしたもの:
+[DSSD](https://arxiv.org/abs/1701.06659)、
+[DSOD](https://arxiv.org/abs/1708.01241)、
+[FPN](https://arxiv.org/abs/1612.03144)、
+[YOLOv2](https://arxiv.org/abs/1612.08242)、
+[YOLOv3](https://pjreddie.com/media/files/papers/YOLOv3.pdf)
+など。
 
 ## 活性化関数
 
@@ -17,8 +23,8 @@
 feature map毎に8種類のprior boxを出力する。
 
 8種類のprior boxのサイズ・アスペクト比は、訓練データからKMeansを使用して決める。
-IoUは重心が一致している想定で算出する。
-([YOLOv2](https://arxiv.org/abs/1612.08242)のDimension Clusters。)
+[YOLOv2](https://arxiv.org/abs/1612.08242)のDimension Clustersのようなものだが、
+距離は `1 - IoU` ではなく、feature mapの格子のサイズに対する相対値をそのままユークリッド距離でKMeansしている。
 
 ## 損失関数：Objectness score
 
@@ -30,7 +36,8 @@ cross entropyではなく[Focal loss](https://arxiv.org/abs/1708.02002)を使用
 
 普通に `softmax` + `categorical crossentropy` 。
 
-YOLOv3の `sigmoid` + `binary crossentropy` はクラス数の増減で正負のバランスが変わってしまうのが気になるのでやめた。
+YOLOv3の `sigmoid` + `binary crossentropy` もやってみたが、
+クラス数の増減で正負のバランスが変わってしまうのが気になるのでやめた。
 
 ## 損失関数：bounding box
 
