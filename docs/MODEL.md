@@ -47,7 +47,8 @@ YOLOv3の `sigmoid` + `binary crossentropy` もやってみたが、
 
 ## confidence
 
-NMSするときとかに使うconfidenceは、Objectness scoreとclassificationの重み付き平均(前者重視)にしている。
+NMSするときに使うconfidenceは、Objectness scoreとclassificationの幾何平均にしている。
+やってみるとなぜか算術平均や調和平均よりmAPが高くなるため。(怪)
 
 ## DataAugmentation
 

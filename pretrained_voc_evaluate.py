@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`results/model.h5`でVOC 07 testの適合率・再現率を算出したり結果をplotしたり。"""
+"""学習済みモデルでVOC 07 testの適合率・再現率を算出したり結果をplotしたり。"""
 import pathlib
 
 import pytoolkit as tk
@@ -23,8 +23,7 @@ def _run():
     class_names = tk.ml.VOC_CLASS_NAMES
 
     # モデルの読み込み
-    od = tk.dl.od.ObjectDetector.load(_RESULTS_DIR / 'model.json')
-    od.load_weights(_RESULTS_DIR / 'model.h5', batch_size=_BATCH_SIZE, strict_nms=True, use_multi_gpu=True)
+    od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
 
     # 予測
     pred = od.predict(X_test, conf_threshold=0.75)
