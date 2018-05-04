@@ -42,7 +42,7 @@ def _run():
            batch_size=_BATCH_SIZE, epochs=_EPOCHS, initial_weights=weights, pb_size_pattern_count=_PB_SIZES,
            flip_h=True, flip_v=False, rotate90=False,
            plot_path=_RESULTS_DIR / 'model.svg',
-           history_path=_RESULTS_DIR / 'train.history.tsv')
+           tsv_log_path=_RESULTS_DIR / 'train.history.tsv')
     # 保存
     od.save(_RESULTS_DIR / 'model.json')
     od.save_weights(_RESULTS_DIR / 'model.h5')
