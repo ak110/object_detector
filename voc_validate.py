@@ -5,7 +5,7 @@ import pathlib
 import pytoolkit as tk
 
 _BASE_DIR = pathlib.Path(__file__).resolve().parent
-_DATA_DIR = _BASE_DIR / 'data'
+_VOCDEVKIT_DIR = _BASE_DIR / 'data' / 'VOCdevkit'
 _RESULTS_DIR = _BASE_DIR / 'results'
 _BATCH_SIZE = 16
 
@@ -18,7 +18,7 @@ def _main():
 
 @tk.log.trace()
 def _run():
-    X_test, y_test = tk.data.voc.load_07_test(_DATA_DIR)
+    X_test, y_test = tk.data.voc.load_07_test(_VOCDEVKIT_DIR)
     od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
     pred_test = od.predict(X_test)
 
@@ -26,7 +26,7 @@ def _run():
     map1 = tk.ml.compute_map(y_test, pred_test, use_voc2007_metric=False)
     map2 = tk.ml.compute_map(y_test, pred_test, use_voc2007_metric=True)
     logger = tk.log.get(__name__)
-    logger.info(f'mAP={map1:.4f} mAP(VOC2007)={map2:.4f}')
+    logger.info(f'mAP={map1:.3f} mAP(VOC2007)={map2:.3f}')
 
 
 if __name__ == '__main__':

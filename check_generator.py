@@ -7,20 +7,19 @@ import pytoolkit as tk
 
 def _main():
     base_dir = pathlib.Path(__file__).resolve().parent
-    data_dir = base_dir / 'data'
+    vocdevkit_dir = base_dir / 'data' / 'VOCdevkit'
     save_dir = base_dir / '___generator_check'
     save_dir.mkdir(exist_ok=True)
 
-    class_names = ['bg'] + tk.ml.VOC_CLASS_NAMES
-    class_name_to_id = {n: i for i, n in enumerate(class_names)}
-    X_test, y_test = tk.ml.ObjectsAnnotation.load_voc_07_test(data_dir, class_name_to_id)
-    X_test, y_test = X_test[:1], y_test[:1]
+    X_val, y_val = tk.data.voc.load_07_test(vocdevkit_dir)
+    X_val, y_val = X_val[:1], y_val[:1]
 
     gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None,
                                            flip_h=True, flip_v=True, rotate90=True)
-    for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), gen.flow(X_test, y_test, data_augmentation=True)):
+    g, _ = gen.flow(X_val, y_val, data_augmentation=True)
+    for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), g):
         for rgb, y in zip(X_batch, y_batch):
-            img = tk.ml.plot_objects(rgb, y.classes, None, y.bboxes, class_names)
+            img = tk.ml.plot_objects(rgb, y.classes, None, y.bboxes, tk.data.voc.CLASS_NAMES)
             tk.ndimage.save(save_dir / f'{i}.jpg', img)
 
 
