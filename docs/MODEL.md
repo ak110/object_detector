@@ -2,7 +2,8 @@
 
 ## ネットワーク
 
-ベースネットワーク(VGG16/ResNet50など) + FPN風
+小さくしてからまた大きくするFPN風なもの。
+prediction moduleの重み共有もあり。
 
 参考にしたもの:
 [DSSD](https://arxiv.org/abs/1701.06659)、
@@ -47,8 +48,9 @@ YOLOv3の `sigmoid` + `binary crossentropy` もやってみたが、
 
 ## confidence
 
-NMSするときに使うconfidenceは、Objectness scoreとclassificationの幾何平均にしている。
+NMSするときに使うconfidenceは、Objectness scoreとclassificationの掛け算にしている。
 やってみるとなぜか算術平均や調和平均よりmAPが高くなるため。(怪)
+幾何平均だと1.0寄りになってしまうので√せず掛け算だけにした。
 
 ## DataAugmentation
 
