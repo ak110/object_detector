@@ -20,7 +20,7 @@ def _main():
 def _run():
     X_test, y_test = tk.data.voc.load_07_test(_VOCDEVKIT_DIR)
     od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
-    pred = od.predict(X_test, conf_threshold=0.75)
+    pred = od.predict(X_test, conf_threshold=0.6)
 
     # 適合率・再現率などを算出・表示
     precisions, recalls, fscores, supports = tk.ml.compute_scores(y_test, pred, iou_threshold=0.5)
