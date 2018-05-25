@@ -19,7 +19,7 @@ def _main():
 @tk.log.trace()
 def _run():
     X_test, y_test = tk.data.voc.load_07_test(_VOCDEVKIT_DIR)
-    od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, strict_nms=False, use_multi_gpu=True)
+    od = tk.dl.od.ObjectDetector.load_voc(batch_size=_BATCH_SIZE, keep_aspect=False, strict_nms=False, use_multi_gpu=True)
     pred_test = od.predict(X_test)
 
     # mAP

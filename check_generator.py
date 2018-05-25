@@ -14,8 +14,7 @@ def _main():
     X_val, y_val = tk.data.voc.load_07_test(vocdevkit_dir)
     X_val, y_val = X_val[:1], y_val[:1]
 
-    gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None,
-                                           flip_h=True, flip_v=True, rotate90=True)
+    gen = tk.dl.od.od_gen.create_generator((512, 512), preprocess_input=lambda x: x, encode_truth=None)
     g, _ = gen.flow(X_val, y_val, data_augmentation=True)
     for i, (X_batch, y_batch) in zip(tk.tqdm(range(32)), g):
         for rgb, y in zip(X_batch, y_batch):
