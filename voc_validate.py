@@ -28,6 +28,24 @@ def _run():
     logger = tk.log.get(__name__)
     logger.info(f'mAP={map1:.3f} mAP(VOC2007)={map2:.3f}')
 
+    # 検算のつもり
+    try:
+        import chainercv
+        import numpy as np
+        gt_classes_list = np.array([y.classes for y in y_test])
+        gt_bboxes_list = np.array([y.bboxes for y in y_test])
+        gt_difficults_list = np.array([y.difficults for y in y_test])
+        pred_classes_list = np.array([p.classes for p in pred_test])
+        pred_confs_list = np.array([p.confs for p in pred_test])
+        pred_bboxes_list = np.array([p.bboxes for p in pred_test])
+        scores = chainercv.evaluations.eval_detection_voc(
+            pred_bboxes_list, pred_classes_list, pred_confs_list,
+            gt_bboxes_list, gt_classes_list, gt_difficults_list,
+            use_07_metric=True)
+        logger.info(f'voc mAP: {scores["map"] * 100:.1f}')
+    except BaseException:
+        logger.warning(f'ChainerCV error', exc_info=True)
+
 
 if __name__ == '__main__':
     _main()

@@ -13,6 +13,10 @@ prediction moduleの重み共有もあり。
 [YOLOv3](https://pjreddie.com/media/files/papers/YOLOv3.pdf)
 など。
 
+## ベースネットワーク
+
+Darknet53(YOLOv3のベースネットワーク)が[強かった](https://twitter.com/ak11/status/1002472881387737088)。
+
 ## 活性化関数
 
 [ELU](https://arxiv.org/abs/1511.07289) (ほぼ趣味)
@@ -35,14 +39,14 @@ cross entropyではなく[Focal loss](https://arxiv.org/abs/1708.02002)を使用
 
 ## 損失関数：classification
 
-普通に `softmax` + `categorical crossentropy` 。
+普通にsoftmax + categorical crossentropy。
 
-YOLOv3の `sigmoid` + `binary crossentropy` もやってみたが、
+YOLOv3のsigmoid + binary crossentropyもやってみたが、
 クラス数の増減で正負のバランスが変わってしまうのが気になるのでやめた。
 
 ## 損失関数：bounding box
 
-普通に `L1-smooth loss` 。
+普通にL1-smooth loss。
 
 `x, y, w, h` ではなく `x1, y1, x2, y2` でやっている。(怪)
 
