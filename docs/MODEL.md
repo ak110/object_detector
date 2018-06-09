@@ -1,5 +1,7 @@
 # モデルの詳細メモ
 
+基本的にはFPSよりも精度重視な感じ。
+
 ## ネットワーク
 
 小さくしてからまた大きくするFPN風なもの。
@@ -23,7 +25,7 @@ Darknet53(YOLOv3のベースネットワーク)が[強かった](https://twitter
 
 ## Prior box
 
-使用するfeature mapは、40x40 ～ 10x10の3つなど。
+使用するfeature mapは、40x40, 20x20, 10x10の3つ。
 
 feature map毎に8種類のprior boxを出力する。
 
