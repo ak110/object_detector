@@ -8,10 +8,11 @@
 prediction moduleの重み共有もあり。
 
 参考にしたもの:
+[FPN](https://arxiv.org/abs/1612.03144)、
 [DSSD](https://arxiv.org/abs/1701.06659)、
 [DSOD](https://arxiv.org/abs/1708.01241)、
-[FPN](https://arxiv.org/abs/1612.03144)、
-[YOLOv2](https://arxiv.org/abs/1612.08242)、
+[RetinaNet](https://arxiv.org/abs/1708.02002)、
+[RefineDet](https://arxiv.org/abs/1711.06897)、
 [YOLOv3](https://pjreddie.com/media/files/papers/YOLOv3.pdf)
 など。
 
