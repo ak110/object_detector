@@ -7,7 +7,7 @@ import pytoolkit as tk
 _BASE_DIR = pathlib.Path(__file__).resolve().parent
 _VOCDEVKIT_DIR = _BASE_DIR / 'data' / 'VOCdevkit'
 _RESULTS_DIR = _BASE_DIR / 'results'
-_INPUT_SIZE = (640, 640)
+_INPUT_SIZE = (320, 320)  # (320, 320) or (640, 640)
 _BATCH_SIZE = 16
 
 
