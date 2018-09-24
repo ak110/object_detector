@@ -30,7 +30,7 @@ def _run(args):
     map1 = tk.ml.compute_map(y_test, pred_test, use_voc2007_metric=False)
     map2 = tk.ml.compute_map(y_test, pred_test, use_voc2007_metric=True)
     logger = tk.log.get(__name__)
-    logger.info(f'mAP={map1:.3f} mAP(VOC2007)={map2:.3f}')
+    logger.info(f'mAP={map1 * 100:.1f} mAP(VOC2007)={map2 * 100:.1f}')
 
     # 検算のつもり
     try:
@@ -50,7 +50,7 @@ def _run(args):
             pred_bboxes_list, pred_classes_list, pred_confs_list,
             gt_bboxes_list, gt_classes_list, gt_difficults_list,
             use_07_metric=True)
-        logger.info(f'ChainerCV evaluation: mAP={scores1["map"]:.3f} mAP(VOC2007)={scores2["map"]:.3f}')
+        logger.info(f'ChainerCV evaluation: mAP={scores1["map"] * 100:.1f} mAP(VOC2007)={scores2["map"] * 100:.1f}')
     except BaseException:
         logger.warning(f'ChainerCV error', exc_info=True)
 
