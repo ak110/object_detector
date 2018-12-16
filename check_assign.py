@@ -9,7 +9,7 @@ import pytoolkit as tk
 
 def _main():
     base_dir = pathlib.Path(__file__).resolve().parent
-    vocdevkit_dir = base_dir / 'data' / 'VOCdevkit'
+    vocdevkit_dir = base_dir / 'pytoolkit' / 'data' / 'VOCdevkit'
     save_dir = base_dir / '___assign_check'
     save_dir.mkdir(exist_ok=True)
 

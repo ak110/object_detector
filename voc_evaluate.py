@@ -9,7 +9,7 @@ import pytoolkit as tk
 def _main():
     tk.better_exceptions()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vocdevkit-dir', default=pathlib.Path('data/VOCdevkit'), type=pathlib.Path)
+    parser.add_argument('--vocdevkit-dir', default=pathlib.Path('pytoolkit/data/VOCdevkit'), type=pathlib.Path)
     parser.add_argument('--result-dir', default=pathlib.Path('results'), type=pathlib.Path)
     parser.add_argument('--input-size', default=(320, 320), type=int, nargs=2)
     parser.add_argument('--batch-size', default=16, type=int)
